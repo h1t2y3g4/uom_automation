@@ -1,19 +1,15 @@
 #!/usr/bin/env python3
 """
-phone_login.py - UOM 纯手机号登录（不需要密码）
+phone_login.py - 旧版纯手机号登录脚本（已归档）
 
-用法:
-  python3 phone_login.py              # 交互式登录（自动识别图形验证码，手动输入短信验证码）
-  python3 phone_login.py --check      # 检查当前 token 是否有效
-  python3 phone_login.py --step1      # 仅获取验证码+发短信（非交互，供 Hermes 调用）
-  python3 phone_login.py --step2 SMS_CODE  CAPTCHA  UUID  # 用短信码登录
+当前状态：
+- 这是项目早期基于 RSAL/接口理解写的手机号登录脚本
+- 后续已确认 UOM 登录主线不应继续以该方案为核心
+- 因此现在只保留历史参考价值
 
-登录流程:
-  1. 自动获取图形验证码并用 ddddocr 识别
-  2. 自动发送短信验证码到手机号
-  3. 用户输入短信验证码
-  4. 用 RSAL 加密 payload 并登录
-  5. 保存 token 到 config.json
+注意：
+- 其中关于 RSAL 的登录理解已经过时
+- 现在不要把它当作当前推荐登录方案
 """
 
 import argparse

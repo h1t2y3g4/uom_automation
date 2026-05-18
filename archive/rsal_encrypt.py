@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
-rsal_encrypt.py - RSAL 加密模块（UOM NROS 框架兼容）
+rsal_encrypt.py - 旧版 RSAL 加密模块（已归档）
 
-UOM 前端 NROS 框架的加密流程：
-  1. 将 JSON 字符串按 50 字符分块
-  2. 每块用 512-bit RSA 公钥 (PKCS1v15) 加密
-  3. 拼接所有密文为一个字符串
-  4. 以 {"data": "密文"} 格式发送
+当前状态：
+- 这是项目早期为了配合 phone_login.py 而写的加密模块
+- 后续实测发现 UOM 当前登录流程并不应继续以整包 RSAL 加密为主线理解
+- 因此该文件已归档，只保留历史研究价值
 
-可独立测试，也可被 phone_login.py 导入使用。
+保留原因：
+- 记录当时对 NROS/RSAL 的逆向尝试过程
+- 供回顾旧方案时参考
 """
 
 import json

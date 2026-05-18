@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
-browser_submit.py - UOM 浏览器飞行计划提交
+browser_submit.py - 旧版浏览器提交流程实验脚本（已归档）
 
-使用 browser_login.py 保存的浏览器状态，在浏览器中完成飞行计划提交。
-全程浏览器操作，不需要 API 逆向。
+当前状态：
+- 这是项目早期尝试直接靠浏览器状态完成飞行计划提交的实验脚本
+- 当前主线已转向 uom_persistent.py + 更贴近真实页面状态的流程
+- 因此该脚本不再作为优先维护对象
 
-用法:
-  python3 browser_submit.py --beg "2026-05-16 09:00" --end "2026-05-16 10:00"
-  python3 browser_submit.py --beg "2026-05-16 09:00" --end "2026-05-16 10:00" --dry-run
+保留原因：
+- 可参考早期页面导航、表单填充、提交思路
+- 可用于回顾早期浏览器提交流程的尝试方式
 """
 
 import argparse

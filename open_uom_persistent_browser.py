@@ -1,4 +1,17 @@
 #!/usr/bin/env python3
+"""
+open_uom_persistent_browser.py - 打开 UOM 持久化浏览器供人工检查
+
+作用：
+- 使用与主线脚本相同的 Playwright 持久化 profile
+- 直接打开 UOM 主站页面
+- 方便人工确认当前登录态、菜单状态、业务页状态
+
+适用场景：
+- 想确认持久化 profile 是否还登录着
+- 想人工进入“一般飞行活动”页面再配合其他脚本调试
+- 不想在这个脚本里执行提交，只想人工观察页面
+"""
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 

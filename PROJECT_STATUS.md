@@ -50,37 +50,41 @@
 2. 进入一般飞行活动列表
 3. 读取最近计划详情
 4. 打开新增页
-5. 自动填充下周一同时间和上次计划内容
+5. 自动填充目标时间和上次计划内容
 6. 继续研究并补齐“航空器/操控员选择器内部选中状态”
 7. 待 `validate()` 真正通过后，再提交
 
 ## 主要脚本
 
-保留使用：
+现役主线：
 - `uom_persistent.py`
   - 当前主脚本
   - 用于持久化 profile、状态检测、进入一般飞行活动、读取历史计划、打开新增页、自动填表
 - `uom_semiauto_submit.py`
   - 半自动辅助脚本
   - 当前主要作用是验证“自动填表后前端校验仍卡在 uavs/drivers”
+- `uom_no_submit_probe.py`
+  - 无副作用探测脚本
+  - 用于观察新增页里航空器/操控员选择弹层的结构
 - `open_uom_persistent_browser.py`
   - 打开持久化浏览器，供人工确认页面状态用
 
-保留参考：
-- `browser_login.py`
-- `browser_login_interactive.py`
-- `browser_submit.py`
-- `uom_api.py`
-- `submit.py`
-- `phone_login.py`
-- `rsal_encrypt.py`
+已归档，仅供参考：
+- `archive/browser_login.py`
+- `archive/browser_login_interactive.py`
+- `archive/browser_submit.py`
+- `archive/uom_api.py`
+- `archive/submit.py`
+- `archive/phone_login.py`
+- `archive/rsal_encrypt.py`
+- `archive/PROGRESS.md`
 
-这些旧脚本可继续作为：
-- 登录细节参考
+这些旧文件可继续作为：
 - 历史尝试记录
 - 字段结构参考
+- 旧方案背景资料
 
-但当前主线以 `uom_persistent.py` 为准。
+但当前开发主线以 `uom_persistent.py` 为准。
 
 ## 关键文件
 
@@ -90,6 +94,10 @@
   - 半自动脚本最近一次运行日志
 - `.playwright-uom-profile/`
   - 持久化浏览器 profile，勿随意删除
+- `HANDOFF_UOM_PROJECT.md`
+  - 面向接手者/其他 AI 的完整移交文档
+- `README.md`
+  - 项目入口说明，已更新为当前主线视角
 
 ## 后续建议
 

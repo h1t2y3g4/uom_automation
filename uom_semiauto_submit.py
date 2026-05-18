@@ -1,4 +1,19 @@
 #!/usr/bin/env python3
+"""
+uom_semiauto_submit.py - UOM 半自动新增页调试脚本
+
+作用：
+- 复用 uom_persistent.py 的持久化浏览器能力
+- 自动进入一般飞行活动并打开新增页
+- 自动填入最近计划内容和目标时间
+- 记录 precheck/postcheck 调试信息
+- 重点定位为什么前端 validate() 仍然报 uavs/drivers
+
+说明：
+- 这是当前主线调试脚本之一
+- 它主要用于排查“页面看起来有航空器/操控员，但前端仍不认已选中”的问题
+- 不应把它当成已经稳定可一键提交成功的正式脚本
+"""
 import json
 import time
 from pathlib import Path

@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+"""
+uom_no_submit_probe.py - UOM 无副作用探测脚本
+
+作用：
+- 复用持久化浏览器登录态
+- 自动进入一般飞行活动并打开新增页
+- 不执行最终提交
+- 重点探测航空器/操控员选择弹层与组件结构
+
+适用场景：
+- 想研究新增页内部组件结构
+- 想观察选择弹层、表格、选择器状态
+- 想尽量避免产生提交副作用时做调试
+"""
 import json
 import time
 from playwright.sync_api import sync_playwright

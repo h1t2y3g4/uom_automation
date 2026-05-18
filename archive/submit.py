@@ -1,21 +1,15 @@
 #!/usr/bin/env python3
 """
-submit.py - 飞行申请提交脚本
-从 config.json 读取认证信息和无人机/驾驶员信息，
-指定空域和时间即可提交。
+submit.py - 旧版直接提交脚本（已归档）
 
-用法:
-  # 试运行（不实际提交）
-  python3 submit.py --space default --beg "2026-05-16 09:00" --end "2026-05-16 10:00" --dry-run
+当前状态：
+- 这是项目早期尝试通过配置和 API 直接提交飞行申请的脚本
+- 当前已确认直接 POST /oapi/pub/planInfo 仍不可靠
+- 因此该脚本不再是主线方案
 
-  # 实际提交
-  python3 submit.py --space default --beg "2026-05-16 09:00" --end "2026-05-16 10:00"
-
-  # 查询当前计划
-  python3 submit.py --check
-
-  # 检查 token 是否有效
-  python3 submit.py --check-token
+保留原因：
+- 可参考旧的命令行参数设计和字段拼装方式
+- 可作为历史尝试记录
 """
 
 import argparse

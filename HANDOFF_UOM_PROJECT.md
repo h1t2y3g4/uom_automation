@@ -199,14 +199,18 @@ UOM 前端把以下两件事分开维护：
 
 ### 5.4 历史方案 / 参考脚本
 
-这些文件现在不是主线，但保留参考价值：
-- `browser_login.py`
-- `browser_login_interactive.py`
-- `browser_submit.py`
-- `phone_login.py`
-- `rsal_encrypt.py`
-- `submit.py`
-- `uom_api.py`
+这些文件现在已经移入 `archive/`，不再作为项目根目录下的主线文件，但仍保留参考价值：
+- `archive/browser_login.py`
+- `archive/browser_login_interactive.py`
+- `archive/browser_submit.py`
+- `archive/phone_login.py`
+- `archive/rsal_encrypt.py`
+- `archive/submit.py`
+- `archive/uom_api.py`
+
+说明：
+- 这些文件主要代表早期的浏览器登录实验、RSAL 登录思路、直接 API 提交思路。
+- 当前开发时不要优先改它们；如需查历史字段、旧思路、旧坑点，再去翻 archive。
 
 ### 5.5 配置文件
 
@@ -228,15 +232,17 @@ UOM 前端把以下两件事分开维护：
 
 - `README.md`
 - `PROJECT_STATUS.md`
-- `PROGRESS.md`
+- `archive/PROGRESS.md`
 
 注意：
-`README.md` 和 `PROGRESS.md` 中部分内容已经过时，尤其 `PROGRESS.md` 还是旧的 RSAL 阶段思路。
-当前应以：
-- `uom_persistent.py`
-- `PROJECT_STATUS.md`
-- 最新调试结论
-为准。
+- `README.md` 已更新为当前主线说明。
+- `archive/PROGRESS.md` 是旧的 RSAL 阶段记录，保留仅供历史参考。
+- 当前应以：
+  - `uom_persistent.py`
+  - `PROJECT_STATUS.md`
+  - `HANDOFF_UOM_PROJECT.md`
+  - 最新调试结论
+  为准。
 
 ## 6. 当前可用使用方法
 

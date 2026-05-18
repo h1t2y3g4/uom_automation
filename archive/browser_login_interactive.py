@@ -1,19 +1,15 @@
 #!/usr/bin/env python3
 """
-browser_login_interactive.py - UOM 浏览器交互式登录
+browser_login_interactive.py - 旧版浏览器交互登录脚本（已归档）
 
-后台运行模式：通过 stdin/stdout 与 Hermes 交互。
-JSON 协议通信。
+当前状态：
+- 这是项目早期为 stdin/stdout 交互设计的浏览器登录脚本
+- 使用 JSON 协议与外部调用方通信
+- 现在不是当前开发主线
 
-启动: python3 browser_login_interactive.py
-输出每一步的状态（JSON），等待 stdin 输入。
-
-协议:
-  输出: {"step": "captcha", "ocr_result": "xxx", "uuid": "xxx", "captcha_path": "/tmp/uom_captcha.png"}
-  输入: {"action": "confirm_captcha", "captcha": "用户确认的验证码"}
-  输出: {"step": "sms_sent", "ok": true}
-  输入: {"action": "input_sms", "sms_code": "123456"}
-  输出: {"step": "login_result", "ok": true/false, "url": "..."}
+保留原因：
+- 可参考早期交互协议设计
+- 可参考验证码确认与短信码输入流程
 """
 
 import base64

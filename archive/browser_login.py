@@ -1,35 +1,15 @@
 #!/usr/bin/env python3
 """
-browser_login.py - UOM 全浏览器登录方案（已验证 2026-05-15）
+browser_login.py - 旧版浏览器登录实验脚本（已归档）
 
-用 Playwright 打开 UOM，在浏览器内完成登录。
+当前状态：
+- 这是项目早期用于浏览器内手机号登录的实验脚本
+- 已验证过部分登录流程，但现在不是主线
+- 之所以归档，是因为项目已转向以持久化 Playwright profile 为核心的整体方案
 
-关键发现（2026-05-15 验证）：
-  NROS 框架不会对整个 payload 做 RSAL 加密！
-  实际发送的是明文 JSON，只是把 telephone 字段双重 base64 编码。
-  之前的 rsal_encrypt.py 方案是错误的。
-
-用法:
-  python3 browser_login.py                    # 完整交互式登录
-  python3 browser_login.py --check            # 检查已保存的 session 是否有效
-
-登录流程（已验证可行）：
-  1. Playwright 打开 UOM → 关弹窗
-  2. 从 Vue 组件提取验证码图片 (lm.yzmImageCode)
-  3. ddddocr 识别 → 用户确认
-  4. Vue $set 填写手机号 + 验证码 → 直接 fetch /api/home/anon/sendSmsCode 发短信
-  5. 用户输入短信码 → Vue $set 填写 → lm.handleSubmit() 提交登录
-  6. 保存 token 和浏览器状态
-
-重要坑点：
-  - sendSMS() 方法走 NROS http 客户端会 401（TokenUndefined）
-    → 改用 fetch 直接调用 /api/home/anon/sendSmsCode
-  - handleSubmit() / telephoneSubmit() 第一次调用会报错
-    → 重新调用一次即可（NROS 框架需要初始化）
-  - Vue 组件路径: root/2/0/portal/portal-banner/portal-loginpage/loginMain
-  - userForm 字段: username, password, telephone, dcode, tcode
-  - 验证码 UUID: lm.txYzmUuid
-  - 验证码图片: lm.yzmImageCode (base64)
+保留原因：
+- 可参考早期验证码处理、短信发送、浏览器登录细节
+- 可用于回看历史实验结论
 """
 
 import argparse

@@ -1,64 +1,79 @@
-# UOM 自动化工具
+# UOM 自动化项目
 
-UOM（无人驾驶航空器综合管理平台）飞行申请自动提交脚本。
+项目目录：`/home/skye/hermes_interface/uom-automation`
 
-基于浏览器抓包逆向，直接调用 UOM 后端 API，无需浏览器。
+## 当前状态
 
-## 文件结构
+这个项目当前主线已经不是“纯 API 直提”，而是：
+- 持久化 Playwright 浏览器
+- 尽量复用登录态
+- 进入 UOM 的“一般飞行活动”业务页
+- 读取最近计划
+- 打开新增页并自动填入上次计划内容
+- 继续攻克航空器/操控员在前端内部的真正选中状态
 
-    uom-automation/
-    ├── config_temp.json  # 可提交的配置模板
-    ├── config.json       # 你本地自用配置文件（已被 .gitignore 忽略）
-    ├── uom_api.py        # API 封装层（所有网络请求）
-    ├── submit.py         # 飞行申请提交脚本（主入口）
-    └── README.md         # 本文件
+当前已经打通：
+- 复用持久化浏览器 profile
+- 检查主站登录态
+- 进入 `运行管理 -> 飞行活动申请 -> 一般飞行活动`
+- 从 iframe 提取 `PUB-Token / ticket / userName`
+- 查询最近历史计划与详情
+- 打开 `flyIndexAdd` 新增页
+- 自动填入上次计划的大部分内容
 
-## 使用方法
+当前主要阻塞点：
+- 新增页前端校验仍可能卡在 `uavs` / `drivers`
+- 页面虽然显示航空器和操控员行，但前端内部未必认定为“已选中”
+- 因此当前还不能把“点到提交按钮”视为真正提交成功
 
-clone 项目后，请先把 `config_temp.json` 改名为 `config.json`，再填上你自己的信息即可使用。
+## 当前建议阅读顺序
 
-### 1. 更新 token
+1. `uom_persistent.py`
+   - 当前主脚本
+   - 负责持久化 profile、状态检查、进入业务页、读取最近计划、打开新增页、自动填表
+2. `HANDOFF_UOM_PROJECT.md`
+   - 最完整的项目交接说明，适合给其他 AI 或其他人快速接手
+3. `PROJECT_STATUS.md`
+   - 当前进度摘要，适合先快速看一遍
+4. `uom_semiauto_submit.py`
+   - 半自动调试脚本，用于定位 `uavs/drivers` 校验问题
+5. `uom_no_submit_probe.py`
+   - 无副作用探测脚本，用来观察新增页选择弹层结构
+6. `open_uom_persistent_browser.py`
+   - 用同一个持久化 profile 打开浏览器，方便人工检查页面状态
 
-每次使用前确认 token 有效：
+## 当前现役文件
 
-    python3 submit.py --check-token
+- `uom_persistent.py`
+- `uom_semiauto_submit.py`
+- `uom_no_submit_probe.py`
+- `open_uom_persistent_browser.py`
+- `HANDOFF_UOM_PROJECT.md`
+- `PROJECT_STATUS.md`
+- `config.json`
+- `config_temp.json`
+- `.playwright-uom-profile/`（持久化浏览器目录，不要随意删除）
 
-如果过期了：
-- 打开 https://uom.caac.gov.cn 并登录
-- F12 → Console → 输入 document.cookie
-- 从返回的字符串中找到 PUB-Token=xxx 的值
-- 更新 config.json 中 auth.pub_token
-- 同时更新 auth.ticket
+## 已归档旧方案
 
-### 2. 查询当前飞行计划
+以下旧脚本和旧文档已经移到 `archive/` 目录，仅保留参考价值：
+- `archive/browser_login.py`
+- `archive/browser_login_interactive.py`
+- `archive/browser_submit.py`
+- `archive/phone_login.py`
+- `archive/rsal_encrypt.py`
+- `archive/submit.py`
+- `archive/uom_api.py`
+- `archive/PROGRESS.md`
 
-    python3 submit.py --check
+这些归档文件主要代表项目早期阶段，例如：
+- 直接 API 提交思路
+- RSAL 登录思路
+- 独立浏览器登录/提交实验脚本
 
-### 3. 试运行（不实际提交）
+它们现在不是开发主线，不建议继续优先修改；如需参考历史字段、旧尝试过程，可以再去看。
 
-    python3 submit.py --space default --beg "2026-05-16 09:00" --end "2026-05-16 10:00" --dry-run
+## 备注
 
-### 4. 实际提交
-
-    python3 submit.py --space default --beg "2026-05-16 09:00" --end "2026-05-16 10:00"
-
-会要求确认后才提交。
-
-### 5. 添加新空域
-
-编辑 config.json，在 airspaces 下添加：
-
-    "my_space": {
-        "points": "经度1,纬度1|经度2,纬度2|经度3,纬度3|经度4,纬度4",
-        "spcBottom": 0,
-        "spcTop": 120,
-        "groupName": "自定义空域"
-    }
-
-然后用 --space my_space 指定。
-
-## 注意事项
-
-- PUB-Token 有效期未知，过期后需重新登录获取
-- 本脚本仅供个人学习研究使用，请遵守相关法规
-- 飞行申请涉及空域安全，请确保信息准确
+- `SKILL.md` 是 Hermes skill 相关文件，不属于项目业务主说明文档，但里面保存了大量调试结论。
+- 如果后续继续开发，优先围绕 `uom_persistent.py` 和 `uom_semiauto_submit.py` 推进。
