@@ -1,0 +1,61 @@
+{
+    "_说明": "UOM 自动化配置文件模板。请复制或重命名为 config.json，并把占位值替换成你自己的真实数据后再运行脚本。",
+    "auth": {
+        "username": "your_uom_username",
+        "pub_token": "",
+        "ticket": ""
+    },
+    "contact": {
+        "name": "请填写联系人姓名",
+        "phone": "13800138000"
+    },
+    "drone": {
+        "pubSeq": 0,
+        "sn": "YOUR_DRONE_SN",
+        "uasCode": "YOUR_UAS_CODE",
+        "ownType": "1",
+        "ownName": "请填写机主姓名",
+        "psnCardtype": "0",
+        "psnCardno": "请填写已脱敏证件号",
+        "mnfName": "请填写生产厂家名称",
+        "mnfCode": "YOUR_MANUFACTURER_CODE",
+        "proMode": "YOUR_PRODUCT_MODE",
+        "proName": "请填写机型名称",
+        "proClass": "0",
+        "proType": "0",
+        "weightEmpty": 0.0,
+        "weightMax": 0.0,
+        "phone_encrypted": "请填写平台返回的加密手机号",
+        "delSts": "0",
+        "plantProtector": "0",
+        "validSts": "0"
+    },
+    "driver": {
+        "pdiSeq": 0,
+        "userId": 0,
+        "name": "请填写操控员姓名",
+        "cardtype": "0",
+        "cardno": "请填写已脱敏证件号",
+        "phone": "13800138000",
+        "dateIssue": "2026-01-01 00:00:00",
+        "dateLose": "2099-01-01 00:00:00",
+        "pp": "请填写平台返回的 pp 字段"
+    },
+    "plan_defaults": {
+        "planType": "11",
+        "spaceType": "3",
+        "taskType": "8",
+        "spcTop": 120,
+        "six": "00000",
+        "remark": ""
+    },
+    "airspaces": {
+        "_说明": "预设空域，脚本通过 --space 参数选择",
+        "default": {
+            "points": "104.01902676,30.52132641|104.01574373,30.51483813|104.02269602,30.51310046|104.02413368,30.51722276",
+            "spcBottom": 0,
+            "spcTop": 120,
+            "groupName": "空域1"
+        }
+    }
+}

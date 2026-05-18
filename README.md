@@ -7,12 +7,15 @@ UOM（无人驾驶航空器综合管理平台）飞行申请自动提交脚本�
 ## 文件结构
 
     uom-automation/
-    ├── config.json       # 配置文件（认证信息、无人机、驾驶员、预设空域）
+    ├── config_temp.json  # 可提交的配置模板
+    ├── config.json       # 你本地自用配置文件（已被 .gitignore 忽略）
     ├── uom_api.py        # API 封装层（所有网络请求）
     ├── submit.py         # 飞行申请提交脚本（主入口）
     └── README.md         # 本文件
 
 ## 使用方法
+
+clone 项目后，请先把 `config_temp.json` 改名为 `config.json`，再填上你自己的信息即可使用。
 
 ### 1. 更新 token
 

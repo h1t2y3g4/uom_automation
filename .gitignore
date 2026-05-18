@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.playwright-uom-profile/
+browser_state.json
+manual_selection_log.json
+config.json
