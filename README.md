@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-这个项目当前主线已经不是“纯 API 直提”，而是：
+这个项目当前主线是：
 - 持久化 Playwright 浏览器
 - 尽量复用登录态
 - 进入 UOM 的“一般飞行活动”业务页
@@ -53,25 +53,6 @@
 - `config.json`
 - `config_temp.json`
 - `.playwright-uom-profile/`（持久化浏览器目录，不要随意删除）
-
-## 已归档旧方案
-
-以下旧脚本和旧文档已经移到 `archive/` 目录，仅保留参考价值：
-- `archive/browser_login.py`
-- `archive/browser_login_interactive.py`
-- `archive/browser_submit.py`
-- `archive/phone_login.py`
-- `archive/rsal_encrypt.py`
-- `archive/submit.py`
-- `archive/uom_api.py`
-- `archive/PROGRESS.md`
-
-这些归档文件主要代表项目早期阶段，例如：
-- 直接 API 提交思路
-- RSAL 登录思路
-- 独立浏览器登录/提交实验脚本
-
-它们现在不是开发主线，不建议继续优先修改；如需参考历史字段、旧尝试过程，可以再去看。
 
 ## 备注
 

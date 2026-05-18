@@ -69,23 +69,6 @@
 - `open_uom_persistent_browser.py`
   - 打开持久化浏览器，供人工确认页面状态用
 
-已归档，仅供参考：
-- `archive/browser_login.py`
-- `archive/browser_login_interactive.py`
-- `archive/browser_submit.py`
-- `archive/uom_api.py`
-- `archive/submit.py`
-- `archive/phone_login.py`
-- `archive/rsal_encrypt.py`
-- `archive/PROGRESS.md`
-
-这些旧文件可继续作为：
-- 历史尝试记录
-- 字段结构参考
-- 旧方案背景资料
-
-但当前开发主线以 `uom_persistent.py` 为准。
-
 ## 关键文件
 
 - `config.json`
