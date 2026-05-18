@@ -2,18 +2,93 @@
 
 项目目录：`/home/skye/hermes_interface/uom-automation`
 
+## 当前结构
+
+这个项目现在按职责拆成 4 个明确入口：
+
+- `uom_core.py`
+  - 只放底层能力
+  - 包括持久化 Playwright profile、登录态判断、进入一般飞行活动、oapi 认证、读取最近计划、打开新增页、填表、探测、提交等公共函数
+- `uom_login.py`
+  - 专门处理登录/状态类操作
+  - 包括：`status / login / ensure-fly / latest-plan / open-browser`
+- `uom_probe.py`
+  - 只放无副作用探测流程
+- `uom_semiauto.py`
+  - 只放半自动提交流程
+
+这样做的目的：
+- 不再让 `uom_core.py` 同时充当 CLI 大杂烩
+- 登录/状态、无副作用探测、半自动提交流程各自独立
+- 公共底层能力只维护一份，避免重复逻辑漂移
+
+## 推荐用法
+
+登录/状态相关：
+
+```bash
+python3 uom_login.py status
+python3 uom_login.py login
+python3 uom_login.py ensure-fly
+python3 uom_login.py latest-plan
+python3 uom_login.py open-browser
+```
+
+无副作用探测：
+
+```bash
+python3 uom_probe.py
+```
+
+半自动流程：
+
+```bash
+python3 uom_semiauto.py
+```
+
+## 各文件职责
+
+### 1. `uom_core.py`
+只放公共能力，不承担具体业务模式的入口说明。
+
+主要内容：
+- 配置读取
+- 持久化浏览器启动/关闭
+- 主站登录态判断
+- 短信登录
+- 菜单定位与进入 `一般飞行活动`
+- iframe 认证提取
+- oapi 检查
+- 最近计划 / 详情读取
+- 打开新增页
+- 自动填表
+- 表单快照 / 探测 / 提交等辅助函数
+
+### 2. `uom_login.py`
+专门负责：
+- 检查主站状态
+- 必要时短信登录
+- 确保能进入一般飞行活动
+- 查看最近计划
+- 打开持久化浏览器给人工检查
+
+### 3. `uom_probe.py`
+专门负责：
+- 在不提交的前提下打开新增页
+- 探测航空器/操控员弹层、组件结构、选择器状态
+
+### 4. `uom_semiauto.py`
+专门负责：
+- 自动进入新增页
+- 填入最近计划内容
+- 输出 precheck / postcheck
+- 让你人工确认
+- 再尝试触发提交
+
 ## 当前状态
 
-这个项目当前主线是：
-- 持久化 Playwright 浏览器
-- 尽量复用登录态
-- 进入 UOM 的“一般飞行活动”业务页
-- 读取最近计划
-- 打开新增页并自动填入上次计划内容
-- 继续攻克航空器/操控员在前端内部的真正选中状态
-
-当前已经打通：
-- 复用持久化浏览器 profile
+主线已经打通：
+- 复用持久化 Playwright profile
 - 检查主站登录态
 - 进入 `运行管理 -> 飞行活动申请 -> 一般飞行活动`
 - 从 iframe 提取 `PUB-Token / ticket / userName`
@@ -28,33 +103,32 @@
 
 ## 当前建议阅读顺序
 
-1. `uom_persistent.py`
-   - 当前主脚本
-   - 负责持久化 profile、状态检查、进入业务页、读取最近计划、打开新增页、自动填表
-2. `HANDOFF_UOM_PROJECT.md`
-   - 最完整的项目交接说明，适合给其他 AI 或其他人快速接手
-3. `PROJECT_STATUS.md`
-   - 当前进度摘要，适合先快速看一遍
-4. `uom_semiauto_submit.py`
-   - 半自动调试脚本，用于定位 `uavs/drivers` 校验问题
-5. `uom_no_submit_probe.py`
-   - 无副作用探测脚本，用来观察新增页选择弹层结构
-6. `open_uom_persistent_browser.py`
-   - 用同一个持久化 profile 打开浏览器，方便人工检查页面状态
+1. `uom_core.py`
+   - 当前底层能力实现
+2. `uom_login.py`
+   - 登录/状态入口
+3. `uom_probe.py`
+   - 无副作用探测流程
+4. `uom_semiauto.py`
+   - 半自动提交流程
+5. `HANDOFF_UOM_PROJECT.md`
+6. `PROJECT_STATUS.md`
+7. `SKILL.md`
 
 ## 当前现役文件
 
-- `uom_persistent.py`
-- `uom_semiauto_submit.py`
-- `uom_no_submit_probe.py`
-- `open_uom_persistent_browser.py`
+- `uom_core.py`
+- `uom_login.py`
+- `uom_probe.py`
+- `uom_semiauto.py`
 - `HANDOFF_UOM_PROJECT.md`
 - `PROJECT_STATUS.md`
+- `SKILL.md`
 - `config.json`
 - `config_temp.json`
 - `.playwright-uom-profile/`（持久化浏览器目录，不要随意删除）
 
 ## 备注
 
-- `SKILL.md` 是 Hermes skill 相关文件，不属于项目业务主说明文档，但里面保存了大量调试结论。
-- 如果后续继续开发，优先围绕 `uom_persistent.py` 和 `uom_semiauto_submit.py` 推进。
+- `SKILL.md` 是项目内最新说明文档，涉及脚本职责、默认命令、时间规则、阻塞点时优先看它
+- 如果后续继续开发，优先围绕 `uom_core.py` 补底层能力；围绕 `uom_probe.py` / `uom_semiauto.py` 调整具体流程

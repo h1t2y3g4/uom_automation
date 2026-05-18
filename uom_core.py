@@ -1,21 +1,24 @@
 #!/usr/bin/env python3
 """
-uom_persistent.py - UOM 持久化浏览器方案
+uom_core.py - UOM 持久化浏览器核心能力与统一 CLI 入口
 
-目标：
-- 用固定 Playwright user-data-dir 复用登录态
-- 避免每次都重新手机号登录
-- 同时检测两层认证：
-  1. 主站 NROS 登录态
-  2. 飞行活动 iframe 的 oapi 认证态（PUB-Token + ticket）
-- 基于持久化上下文读取最近计划，并尝试“复制旧计划 -> 改时间 -> 提交”
+职责：
+- 持久化 Playwright profile 复用登录态
+- 主站登录态 / 飞行活动 iframe oapi 认证检查
+- 进入 一般飞行活动
+- 读取最近计划 / 详情
+- 打开新增页 / 半自动填充 / 探测 / 提交
+- 提供统一命令入口，避免多个脚本各自复制前半段流程
 
 用法：
-  python3 uom_persistent.py --status
-  python3 uom_persistent.py --login
-  python3 uom_persistent.py --ensure-fly
-  python3 uom_persistent.py --latest-plan
-  python3 uom_persistent.py --submit-copy-next-monday
+  python3 uom_core.py status
+  python3 uom_core.py login
+  python3 uom_core.py ensure-fly
+  python3 uom_core.py latest-plan
+  python3 uom_core.py probe
+  python3 uom_core.py semiauto
+  python3 uom_core.py open-browser
+  python3 uom_core.py submit-copy-next-tuesday
 """
 
 import argparse
@@ -25,11 +28,14 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from playwright.sync_api import sync_playwright
+
 SCRIPT_DIR = Path(__file__).parent
 CONFIG_FILE = SCRIPT_DIR / "config.json"
 PERSIST_DIR = SCRIPT_DIR / ".playwright-uom-profile"
 CAPTCHA_FILE = Path("/tmp/uom_persistent_captcha.png")
 BASE_URL = "https://uom.caac.gov.cn"
+MANUAL_SELECTION_LOG = SCRIPT_DIR / "manual_selection_log.json"
 
 
 def get_next_weekday_same_time(plan_beg: str, plan_end: str, target_weekday: int):
@@ -41,6 +47,14 @@ def get_next_weekday_same_time(plan_beg: str, plan_end: str, target_weekday: int
     nb = b + timedelta(days=days_ahead)
     ne = e + timedelta(days=days_ahead)
     return nb.strftime('%Y-%m-%d %H:%M:%S'), ne.strftime('%Y-%m-%d %H:%M:%S')
+
+
+def get_next_monday_same_time(plan_beg: str, plan_end: str):
+    return get_next_weekday_same_time(plan_beg, plan_end, 0)
+
+
+def get_next_tuesday_same_time(plan_beg: str, plan_end: str):
+    return get_next_weekday_same_time(plan_beg, plan_end, 1)
 
 
 def load_config():
@@ -141,7 +155,7 @@ def dismiss_popup(page):
 
 def wait_for_login_component(page, timeout_s=20):
     deadline = time.time() + timeout_s
-    js = """
+    js = r"""
     () => {
         const app = document.querySelector('#app');
         if (!app || !app.__vue__) return null;
@@ -258,48 +272,29 @@ def login_via_sms(page):
             try {
                 lm.handleSubmit();
                 return {ok:true};
-            } catch(e) {
+            } catch (e) {
                 return {ok:false, error:e.message};
             }
         }
         """,
         [sms],
     )
-    print("提交登录返回:", submit_result)
     if not submit_result.get("ok"):
-        time.sleep(1)
-        page.evaluate(
-            """
-            () => {
-                const app = document.querySelector('#app').__vue__;
-                function find(vm, d) {
-                    if (d > 12) return null;
-                    if (vm.$data && vm.$data.personnalUsername !== undefined && vm.$data.userForm) return vm;
-                    for (const c of (vm.$children || [])) { const r = find(c, d + 1); if (r) return r; }
-                    return null;
-                }
-                const lm = find(app, 0);
-                lm.handleSubmit();
-            }
-            """
-        )
+        return submit_result
 
     deadline = time.time() + 20
     while time.time() < deadline:
-        try:
-            if '#/main' in page.url:
-                break
-        except Exception:
-            pass
-        time.sleep(0.5)
-    time.sleep(2)
-    return check_main_login(page)
+        status = check_main_login(page)
+        if status.get("hasMainLogin"):
+            return {"ok": True, "status": status}
+        time.sleep(1)
+    return {"ok": False, "error": "登录后仍未进入主站", "status": check_main_login(page)}
 
 
 def check_main_login(page):
     try:
         return page.evaluate(
-            """
+            r"""
             () => {
                 const sessionToken = localStorage.getItem('session_token');
                 let nrosToken = null;
@@ -308,12 +303,51 @@ def check_main_login(page):
                 } catch(e) {}
                 const text = document.body ? document.body.innerText : '';
                 const hasMainUi = /系统主页|运行管理|首页/.test(text || '');
+                const href = location.href || '';
+                const onLoginPage = /#\/login(?:$|[?#])/.test(href);
                 return {
-                    url: location.href,
+                    url: href,
                     title: document.title,
                     nrosToken,
                     sessionToken,
-                    hasMainLogin: !!(nrosToken || sessionToken || hasMainUi)
+                    hasMainUi,
+                    onLoginPage,
+                    hasMainLogin: !!(!onLoginPage && (nrosToken || hasMainUi))
+                };
+            }
+            """
+        )
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def debug_menu_snapshot(page):
+    try:
+        return page.evaluate(
+            r"""
+            () => {
+                const href = location.href || '';
+                const title = document.title || '';
+                const text = ((document.body && document.body.innerText) || '').replace(/\s+/g, ' ').trim();
+                const snippets = [];
+                const candidates = Array.from(document.querySelectorAll('div,span,li,a,button')).slice(0, 800);
+                for (const el of candidates) {
+                    const t = ((el.textContent || '').replace(/\s+/g, ' ').trim());
+                    if (!t) continue;
+                    if (/运行管理|飞行活动申请|一般飞行活动/.test(t)) {
+                        snippets.push({
+                            text: t,
+                            tag: el.tagName,
+                            cls: (el.className || '').toString().slice(0, 200)
+                        });
+                    }
+                }
+                return {
+                    url: href,
+                    title,
+                    bodyTextHead: text.slice(0, 1200),
+                    menuHits: snippets.slice(0, 40),
+                    iframeCount: document.querySelectorAll('iframe').length,
                 };
             }
             """
@@ -326,34 +360,75 @@ def open_fly_activity(page):
     page.goto(f"{BASE_URL}/#/main", wait_until="domcontentloaded", timeout=60000)
     time.sleep(3)
     dismiss_popup(page)
-    js = """
+    js = r"""
     () => {
-        function findByText(root, regex, allowedClasses=[]) {
-            const els = Array.from(root.querySelectorAll('div,span,li,a,button'));
-            for (const el of els) {
-                const text = (el.textContent || '').trim();
-                if (regex.test(text)) {
-                    const cls = (el.className || '').toString();
-                    if (!allowedClasses.length || allowedClasses.some(c => cls.includes(c))) return el;
-                }
+        const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+        function norm(s) {
+            return (s || '').replace(/\s+/g, ' ').trim();
+        }
+        function visible(el) {
+            if (!el) return false;
+            const style = window.getComputedStyle(el);
+            if (!style || style.visibility === 'hidden' || style.display === 'none') return false;
+            const rect = el.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+        }
+        function clickish(el) {
+            if (!el) return false;
+            el.scrollIntoView({block: 'center', inline: 'center'});
+            for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click']) {
+                el.dispatchEvent(new MouseEvent(type, {bubbles:true, cancelable:true, view:window}));
             }
-            return null;
+            return true;
         }
-        const top = findByText(document, /^运行管理$/);
-        if (top) top.click();
-        const leftExpand = findByText(document, /^飞行活动申请$/);
-        if (leftExpand) leftExpand.click();
-        const general = findByText(document, /^一般飞行活动$/, ['ivu-menu-item', 'menuitem']);
-        if (general) {
-            general.click();
-            return {ok:true};
+        function findBest(regex, classHints=[]) {
+            const els = Array.from(document.querySelectorAll('div,span,li,a,button,i,p'));
+            const scored = [];
+            for (const el of els) {
+                const text = norm(el.textContent || '');
+                if (!text || !regex.test(text)) continue;
+                const cls = (el.className || '').toString();
+                const score = (visible(el) ? 100 : 0)
+                    + (classHints.some(c => cls.includes(c)) ? 30 : 0)
+                    + (/menu|nav|item|sub|title/i.test(cls) ? 10 : 0)
+                    - Math.abs(text.length - String(regex).length);
+                scored.push({el, text, cls, score});
+            }
+            scored.sort((a, b) => b.score - a.score);
+            return scored[0] || null;
         }
-        return {ok:false, error:'一般飞行活动菜单未找到'};
+
+        return (async () => {
+            const top = findBest(/^运行管理$/);
+            if (top) {
+                clickish(top.el);
+                await sleep(800);
+            }
+            const leftExpand = findBest(/^飞行活动申请$/);
+            if (leftExpand) {
+                clickish(leftExpand.el);
+                await sleep(1200);
+            }
+            const general = findBest(/^一般飞行活动$/, ['ivu-menu-item', 'menuitem', 'el-menu-item']);
+            if (general) {
+                clickish(general.el);
+                return {ok:true, clicked:{top: top && top.text, leftExpand: leftExpand && leftExpand.text, general: general.text}};
+            }
+            return {
+                ok:false,
+                error:'一般飞行活动菜单未找到',
+                debug:{
+                    top: top ? {text: top.text, cls: top.cls} : null,
+                    leftExpand: leftExpand ? {text: leftExpand.text, cls: leftExpand.cls} : null,
+                    menuTexts: Array.from(document.querySelectorAll('div,span,li,a,button')).map(el => norm(el.textContent || '')).filter(Boolean).filter(t => /运行管理|飞行活动申请|一般飞行活动/.test(t)).slice(0, 30)
+                }
+            };
+        })();
     }
     """
     res = page.evaluate(js)
     if not res.get("ok"):
-        raise RuntimeError(res)
+        raise RuntimeError({**res, "snapshot": debug_menu_snapshot(page)})
     deadline = time.time() + 30
     while time.time() < deadline:
         try:
@@ -363,7 +438,7 @@ def open_fly_activity(page):
         except Exception:
             pass
         time.sleep(1)
-    raise RuntimeError("进入飞行活动页面失败：未出现 iframe")
+    raise RuntimeError({"error": "进入飞行活动页面失败：未出现 iframe", "snapshot": debug_menu_snapshot(page)})
 
 
 def get_iframe_auth(page):
@@ -553,7 +628,7 @@ def open_new_fly_form(page):
 
 def fill_new_form_from_detail(page, detail, plan_beg_new, plan_end_new):
     return page.evaluate(
-        """
+        r"""
         ([detail, planBegNew, planEndNew]) => {
             const iframe = document.querySelector('iframe');
             if (!iframe) return {ok:false, error:'no iframe'};
@@ -690,14 +765,6 @@ def fill_new_form_from_detail(page, detail, plan_beg_new, plan_end_new):
     )
 
 
-def get_next_monday_same_time(plan_beg: str, plan_end: str):
-    return get_next_weekday_same_time(plan_beg, plan_end, 0)
-
-
-def get_next_tuesday_same_time(plan_beg: str, plan_end: str):
-    return get_next_weekday_same_time(plan_beg, plan_end, 1)
-
-
 def update_copied_form_times(page, plan_beg_new, plan_end_new):
     return page.evaluate(
         """
@@ -719,7 +786,6 @@ def update_copied_form_times(page, plan_beg_new, plan_end_new):
                 if (!vm || depth > 15) return null;
                 const name = (vm.$options && (vm.$options.name || vm.$options._componentTag)) || '';
                 if (name === 'FLY_INDEX_ADD' && vm.$data && vm.$data.form) return vm;
-                if (vm.$data && vm.$data.form && vm.$data.uavInfoList !== undefined && vm.$data.driverInfoList !== undefined) return vm;
                 for (const c of (vm.$children || [])) {
                     const r = findMainForm(c, depth + 1);
                     if (r) return r;
@@ -727,27 +793,18 @@ def update_copied_form_times(page, plan_beg_new, plan_end_new):
                 return null;
             }
             let comp = null;
-            for (const rootVm of collectVueRoots()) {
-                comp = findMainForm(rootVm, 0);
+            for (const root of collectVueRoots()) {
+                comp = findMainForm(root, 0);
                 if (comp) break;
             }
-            if (!comp) return {ok:false, error:'main form not found'};
-            const f = comp.$data.form;
+            if (!comp) return {ok:false, error:'FLY_INDEX_ADD not found'};
+            const f = comp.$data.form || {};
             f.planBeg = planBegNew;
             f.planEnd = planEndNew;
             if (f.planBegStr !== undefined) f.planBegStr = planBegNew;
             if (f.planEndStr !== undefined) f.planEndStr = planEndNew;
             if (typeof comp.$forceUpdate === 'function') comp.$forceUpdate();
-            return {
-                ok:true,
-                compName: (comp.$options && (comp.$options.name || comp.$options._componentTag)) || '',
-                planBeg: f.planBeg,
-                planEnd: f.planEnd,
-                planBegStr: f.planBegStr,
-                planEndStr: f.planEndStr,
-                uavCount: Array.isArray(comp.$data.uavInfoList) ? comp.$data.uavInfoList.length : null,
-                driverCount: Array.isArray(comp.$data.driverInfoList) ? comp.$data.driverInfoList.length : null,
-            };
+            return {ok:true, planBeg:f.planBeg, planEnd:f.planEnd};
         }
         """,
         [plan_beg_new, plan_end_new],
@@ -756,58 +813,58 @@ def update_copied_form_times(page, plan_beg_new, plan_end_new):
 
 def trigger_submit_copied_form(page):
     return page.evaluate(
-        """
-        () => {
+        r"""
+        async () => {
             const iframe = document.querySelector('iframe');
             if (!iframe) return {ok:false, error:'no iframe'};
             const doc = iframe.contentDocument;
-
-            const knowBtn = Array.from(doc.querySelectorAll('button,span,div')).find(el => {
-                const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
-                return t === '我知道了';
-            });
-            if (knowBtn) knowBtn.click();
-
-            const submitBtn = Array.from(doc.querySelectorAll('button,span,div,a')).find(el => {
-                const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
-                const cls = (el.className || '').toString();
-                return t === '提交申请' && cls.includes('el-button');
-            });
-            if (submitBtn) {
-                submitBtn.click();
-                return {ok:true, method:'button-click'};
-            }
-
-            const rootEl = doc.querySelector('#app') || doc.body;
-            function collectVueRoots() {
-                const roots = [];
-                const all = [rootEl, ...Array.from(rootEl.querySelectorAll('*')).slice(0, 300)];
-                for (const el of all) {
-                    if (el && el.__vue__) roots.push(el.__vue__);
-                }
-                return roots;
-            }
+            const app = doc.querySelector('#app');
+            if (!app || !app.__vue__) return {ok:false, error:'no vue root'};
             function findMainForm(vm, depth) {
                 if (!vm || depth > 15) return null;
                 const name = (vm.$options && (vm.$options.name || vm.$options._componentTag)) || '';
                 if (name === 'FLY_INDEX_ADD' && vm.$data && vm.$data.form) return vm;
-                if (vm.$data && vm.$data.form && vm.$data.uavInfoList !== undefined && vm.$data.driverInfoList !== undefined) return vm;
                 for (const c of (vm.$children || [])) {
                     const r = findMainForm(c, depth + 1);
                     if (r) return r;
                 }
                 return null;
             }
-            let comp = null;
-            for (const rootVm of collectVueRoots()) {
-                comp = findMainForm(rootVm, 0);
-                if (comp) break;
+            const comp = findMainForm(app.__vue__, 0);
+            if (!comp) return {ok:false, error:'FLY_INDEX_ADD not found'};
+            const payload = {
+                ok:true,
+                before: {
+                    uavs: Array.isArray(comp.$data.form && comp.$data.form.uavs) ? comp.$data.form.uavs.length : null,
+                    drivers: Array.isArray(comp.$data.form && comp.$data.form.drivers) ? comp.$data.form.drivers.length : null,
+                    spaces: Array.isArray(comp.$data.form && comp.$data.form.spaces) ? comp.$data.form.spaces.length : null,
+                }
+            };
+            if (comp.$refs && comp.$refs.form && typeof comp.$refs.form.validate === 'function') {
+                payload.validate = await new Promise(resolve => {
+                    comp.$refs.form.validate((valid, fields) => {
+                        resolve({valid, fields: fields ? Object.keys(fields) : []});
+                    });
+                });
             }
-            if (comp && typeof comp.submitPlan === 'function') {
-                comp.submitPlan();
-                return {ok:true, method:'submitPlan()'};
+            const submitBtn = Array.from(doc.querySelectorAll('button,span,div,a')).find(el => ((el.textContent || '').replace(/\s+/g, ' ').trim()) === '提交申请' && el.offsetParent !== null);
+            if (submitBtn) {
+                submitBtn.click();
+                payload.clickedSubmitButton = true;
+            } else {
+                payload.clickedSubmitButton = false;
             }
-            return {ok:false, error:'submit trigger not found'};
+            try {
+                if (typeof comp.submitPlan === 'function') {
+                    comp.submitPlan();
+                    payload.calledSubmitPlan = true;
+                } else {
+                    payload.calledSubmitPlan = false;
+                }
+            } catch (e) {
+                payload.submitPlanError = e.message;
+            }
+            return payload;
         }
         """
     )
@@ -815,7 +872,7 @@ def trigger_submit_copied_form(page):
 
 def inspect_add_dialogs(page, detail, plan_beg_new, plan_end_new):
     return page.evaluate(
-        """
+        r"""
         ([detail, planBegNew, planEndNew]) => {
             const iframe = document.querySelector('iframe');
             if (!iframe) return {ok:false, error:'no iframe'};
@@ -834,204 +891,150 @@ def inspect_add_dialogs(page, detail, plan_beg_new, plan_end_new):
                 return null;
             }
 
-            function textOf(el) {
-                return ((el && el.textContent) || '').replace(/\s+/g, ' ').trim();
-            }
-
-            function visibleAddButtons(root) {
-                return Array.from(root.querySelectorAll('button,span,div,a')).filter(el => textOf(el) === '添加' && el.offsetParent !== null);
-            }
-
-            function snapshotDialogs(label) {
-                const dialogs = Array.from(doc.querySelectorAll('.el-dialog, .ivu-modal, [role="dialog"]')).filter(el => el.offsetParent !== null);
-                return {
-                    label,
-                    dialogCount: dialogs.length,
-                    dialogs: dialogs.slice(0, 4).map((dlg, idx) => ({
-                        index: idx,
-                        cls: (dlg.className || '').toString(),
-                        title: textOf(dlg.querySelector('.el-dialog__title, .ivu-modal-header-inner, .ivu-modal-header, .el-dialog__header')),
-                        buttons: Array.from(dlg.querySelectorAll('button,span,a,div')).map(el => textOf(el)).filter(Boolean).slice(0, 20),
-                        tables: Array.from(dlg.querySelectorAll('table')).map((tbl, i) => ({
-                            index: i,
-                            headers: Array.from(tbl.querySelectorAll('th')).map(th => textOf(th)).filter(Boolean).slice(0, 12),
-                            firstRows: Array.from(tbl.querySelectorAll('tr')).slice(0, 4).map(tr => Array.from(tr.querySelectorAll('td')).map(td => textOf(td)).filter(Boolean).slice(0, 12))
-                        })),
-                        text: textOf(dlg).slice(0, 1200)
-                    }))
-                };
+            function dumpVisibleDialogs(root) {
+                return Array.from(root.querySelectorAll('.ivu-modal-wrap,.ivu-drawer-wrap,[role="dialog"]')).filter(el => el.offsetParent !== null).map(el => ({
+                    text: ((el.innerText || '').replace(/\s+/g, ' ').trim()).slice(0, 1000),
+                    cls: (el.className || '').toString(),
+                }));
             }
 
             const comp = findMainForm(app.__vue__, 0);
             if (!comp) return {ok:false, error:'FLY_INDEX_ADD not found'};
-            const f = comp.$data.form || {};
-            f.planBeg = planBegNew;
-            f.planEnd = planEndNew;
-            if (f.planBegStr !== undefined) f.planBegStr = planBegNew;
-            if (f.planEndStr !== undefined) f.planEndStr = planEndNew;
-
-            const before = snapshotDialogs('before');
-            const addButtons = visibleAddButtons(doc);
-            const result = {ok:true, before, addButtonCount:addButtons.length};
-
-            if (addButtons[0]) {
-                addButtons[0].click();
-                result.afterUavClick = snapshotDialogs('after_uav_click');
-            }
-            if (addButtons[1]) {
-                addButtons[1].click();
-                result.afterDriverClick = snapshotDialogs('after_driver_click');
-            }
-
-            result.compRefKeys = comp.$refs ? Object.keys(comp.$refs) : [];
-            result.dataKeys = Object.keys(comp.$data || {}).filter(k => /uav|driver|select|check|space|dialog|table|choose/i.test(k));
-            return result;
+            const fill = {
+                planBeg: planBegNew,
+                planEnd: planEndNew,
+                uavSourceCount: Array.isArray(detail.uavs) ? detail.uavs.length : 0,
+                driverSourceCount: Array.isArray(detail.drivers) ? detail.drivers.length : 0,
+            };
+            const addButtons = Array.from(doc.querySelectorAll('button,span,div,a')).filter(el => ((el.textContent || '').replace(/\s+/g, ' ').trim()) === '添加' && el.offsetParent !== null);
+            if (addButtons[0]) addButtons[0].click();
+            if (addButtons[1]) addButtons[1].click();
+            return {
+                ok:true,
+                fill,
+                visibleDialogs: dumpVisibleDialogs(doc),
+                refKeys: comp.$refs ? Object.keys(comp.$refs) : [],
+                dataKeys: Object.keys(comp.$data || {}).filter(k => /uav|driver|select|check|space|dialog|table|choose/i.test(k)),
+            };
         }
         """,
         [detail, plan_beg_new, plan_end_new],
     )
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--status", action="store_true")
-    parser.add_argument("--login", action="store_true")
-    parser.add_argument("--ensure-fly", action="store_true")
-    parser.add_argument("--latest-plan", action="store_true")
-    parser.add_argument("--submit-copy-next-monday", action="store_true")
-    parser.add_argument("--headless", action="store_true")
-    args = parser.parse_args()
+def js_eval(page, expression, fallback_label, arg=None):
+    try:
+        if arg is None:
+            return page.evaluate(expression)
+        return page.evaluate(expression, arg)
+    except Exception as e:
+        return {"ok": False, "error": str(e), "stage": fallback_label}
 
-    from playwright.sync_api import sync_playwright
 
+def get_form_debug_snapshot(page, stage):
+    return js_eval(page, """
+    ([stage]) => {
+      const iframe = document.querySelector('iframe');
+      if (!iframe) return {ok:false, stage, error:'no iframe'};
+      const doc = iframe.contentDocument;
+      if (!doc) return {ok:false, stage, error:'no iframe doc'};
+      const app = doc.querySelector('#app');
+      function find(vm,d){ if(!vm||d>15) return null; const n=(vm.$options&&(vm.$options.name||vm.$options._componentTag))||''; if(n==='FLY_INDEX_ADD'&&vm.$data&&vm.$data.form) return vm; for(const c of (vm.$children||[])){ const r=find(c,d+1); if(r) return r; } return null; }
+      const comp = app && app.__vue__ ? find(app.__vue__,0) : null;
+      const bodyText = (doc.body && doc.body.innerText || '').slice(0, 4000);
+      if (!comp) {
+        return {
+          ok:false,
+          stage,
+          error:'FLY_INDEX_ADD not found',
+          hasApp: !!app,
+          hasVue: !!(app && app.__vue__),
+          href: iframe.contentWindow ? iframe.contentWindow.location.href : null,
+          text: bodyText
+        };
+      }
+      const dataKeys = Object.keys(comp.$data || {});
+      const interestingKeys = dataKeys.filter(k => /uav|driver|select|check|space|dialog|table|choose/i.test(k));
+      const form = comp.$data.form || {};
+      const payload = {
+        ok:true,
+        stage,
+        compName: (comp.$options && (comp.$options.name || comp.$options._componentTag)) || '',
+        href: iframe.contentWindow ? iframe.contentWindow.location.href : null,
+        refKeys: comp.$refs ? Object.keys(comp.$refs) : [],
+        interestingKeys,
+        flags: Object.fromEntries(interestingKeys.slice(0, 80).map(k => {
+          const v = comp.$data[k];
+          if (Array.isArray(v)) return [k, {type:'array', length:v.length}];
+          if (v && typeof v === 'object') return [k, {type:'object', keys:Object.keys(v).slice(0,10)}];
+          return [k, v];
+        })),
+        form: {
+          planBeg: form.planBeg ? String(form.planBeg) : null,
+          planEnd: form.planEnd ? String(form.planEnd) : null,
+          uavs: Array.isArray(form.uavs) ? form.uavs.length : null,
+          drivers: Array.isArray(form.drivers) ? form.drivers.length : null,
+          spaces: Array.isArray(form.spaces) ? form.spaces.length : null,
+        },
+        text: bodyText
+      };
+      if (comp.$refs && comp.$refs.form && typeof comp.$refs.form.validate === 'function') {
+        return new Promise(resolve => {
+          comp.$refs.form.validate((valid, fields) => {
+            payload.valid = valid;
+            payload.fields = Object.keys(fields || {});
+            resolve(payload);
+          });
+        });
+      }
+      payload.valid = null;
+      payload.fields = [];
+      return payload;
+    }
+    """, stage, [stage])
+
+
+def launch_context(headless=False):
     PERSIST_DIR.mkdir(parents=True, exist_ok=True)
-    with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            user_data_dir=str(PERSIST_DIR),
-            headless=args.headless,
-            viewport={"width": 1280, "height": 900},
-            args=["--no-sandbox", "--disable-dev-shm-usage"],
-        )
-        page = context.pages[0] if context.pages else context.new_page()
+    p = sync_playwright().start()
+    context = p.chromium.launch_persistent_context(
+        user_data_dir=str(PERSIST_DIR),
+        headless=headless,
+        viewport={"width": 1280, "height": 900},
+        args=["--no-sandbox", "--disable-dev-shm-usage"],
+    )
+    page = context.pages[0] if context.pages else context.new_page()
+    return p, context, page
 
-        if args.status:
-            page.goto(f"{BASE_URL}/#/main", wait_until="domcontentloaded", timeout=60000)
-            time.sleep(3)
-            dismiss_popup(page)
-            status = check_main_login(page)
-            print("主站状态:")
-            print(json.dumps(status, ensure_ascii=False, indent=2))
-            if status.get("hasMainLogin"):
-                try:
-                    open_fly_activity(page)
-                    oapi = check_oapi_auth(page)
-                    print("飞行活动 oapi 状态:")
-                    print(json.dumps(oapi, ensure_ascii=False, indent=2)[:3000])
-                except Exception as e:
-                    print("飞行活动检查失败:", e)
-            context.close()
-            return
 
-        if args.login:
-            page.goto(f"{BASE_URL}/#/main", wait_until="domcontentloaded", timeout=60000)
-            time.sleep(3)
-            dismiss_popup(page)
-            status = check_main_login(page)
-            if status.get("hasMainLogin"):
-                print("已复用登录态，无需重新登录")
-                print(json.dumps(status, ensure_ascii=False, indent=2))
-            else:
-                result = login_via_sms(page)
-                print("登录结果:")
-                print(json.dumps(result, ensure_ascii=False, indent=2))
-            context.close()
-            return
-
-        if args.ensure_fly:
-            page.goto(f"{BASE_URL}/#/main", wait_until="domcontentloaded", timeout=60000)
-            time.sleep(3)
-            dismiss_popup(page)
-            status = check_main_login(page)
-            if not status.get("hasMainLogin"):
-                result = login_via_sms(page)
-                print("登录结果:")
-                print(json.dumps(result, ensure_ascii=False, indent=2))
-            open_fly_activity(page)
-            auth = get_iframe_auth(page)
-            print("iframe 认证:")
-            print(json.dumps(auth, ensure_ascii=False, indent=2))
-            oapi = check_oapi_auth(page)
-            print("oapi 检查:")
-            print(json.dumps(oapi, ensure_ascii=False, indent=2)[:3000])
-            context.close()
-            return
-
-        if args.latest_plan:
-            page.goto(f"{BASE_URL}/#/main", wait_until="domcontentloaded", timeout=60000)
-            time.sleep(3)
-            dismiss_popup(page)
-            status = check_main_login(page)
-            if not status.get("hasMainLogin"):
-                result = login_via_sms(page)
-                print("登录结果:")
-                print(json.dumps(result, ensure_ascii=False, indent=2))
-            open_fly_activity(page)
-            latest = get_latest_plan(page)
-            print("最近计划:")
-            print(json.dumps(latest, ensure_ascii=False, indent=2))
-            if latest.get('ok'):
-                detail = get_plan_detail(page, latest['latest']['planId'])
-                print("最近计划详情:")
-                print(json.dumps(detail, ensure_ascii=False, indent=2)[:4000])
-            context.close()
-            return
-
-        if args.submit_copy_next_monday:
-            page.goto(f"{BASE_URL}/#/main", wait_until="domcontentloaded", timeout=60000)
-            time.sleep(3)
-            dismiss_popup(page)
-            status = check_main_login(page)
-            if not status.get("hasMainLogin"):
-                result = login_via_sms(page)
-                print("登录结果:")
-                print(json.dumps(result, ensure_ascii=False, indent=2))
-            open_fly_activity(page)
-            latest = get_latest_plan(page)
-            if not latest.get('ok'):
-                print(json.dumps(latest, ensure_ascii=False, indent=2))
-                context.close()
-                return
-            detail = get_plan_detail(page, latest['latest']['planId'])
-            full_profile = load_full_submit_profile()
-            if full_profile:
-                detail['uavs'] = full_profile['uavs']
-                detail['drivers'] = full_profile['drivers']
-            print("使用最近计划:")
-            print(json.dumps(detail, ensure_ascii=False, indent=2)[:3000])
-            next_beg, next_end = get_next_tuesday_same_time(detail['planBeg'], detail['planEnd'])
-            print(f"目标时间: {next_beg} ~ {next_end}")
-            add_res = open_new_fly_form(page)
-            print("打开新增页:", json.dumps(add_res, ensure_ascii=False))
-            fly_add = wait_for_fly_add(page)
-            print("等待 flyIndexAdd:", json.dumps(fly_add, ensure_ascii=False))
-            if not fly_add:
-                context.close()
-                return
-            upd = fill_new_form_from_detail(page, detail, next_beg, next_end)
-            print("填充表单:")
-            print(json.dumps(upd, ensure_ascii=False, indent=2)[:4000])
-            sub = trigger_submit_copied_form(page)
-            print("触发提交:", json.dumps(sub, ensure_ascii=False))
-            time.sleep(6)
-            latest2 = get_latest_plan(page)
-            print("提交后最近计划:")
-            print(json.dumps(latest2, ensure_ascii=False, indent=2))
-            context.close()
-            return
-
-        parser.print_help()
+def close_context(playwright_handle, context):
+    try:
         context.close()
+    finally:
+        playwright_handle.stop()
 
 
-if __name__ == '__main__':
-    main()
+def ensure_main_page(page, timeout=120000, settle_seconds=8):
+    page.goto(f'{BASE_URL}/#/main', wait_until='domcontentloaded', timeout=timeout)
+    time.sleep(settle_seconds)
+    dismiss_popup(page)
+    return check_main_login(page)
+
+
+def require_reliable_main_login(status, context, message):
+    if status.get('onLoginPage') or '#/login' in (status.get('url') or '') or not status.get('hasMainLogin'):
+        print(message)
+        context.close()
+        raise SystemExit(2)
+
+
+def fetch_latest_detail(page):
+    latest = get_latest_plan(page)
+    if not latest.get('ok'):
+        return None, latest, None
+    detail = get_plan_detail(page, latest['latest']['planId'])
+    full_profile = load_full_submit_profile()
+    if full_profile:
+        detail['uavs'] = full_profile['uavs']
+        detail['drivers'] = full_profile['drivers']
+    return latest, None, detail
