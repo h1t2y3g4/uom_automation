@@ -12,15 +12,16 @@
 - `uom_login.py`
   - 专门处理登录/状态类操作
   - 包括：`status / login / ensure-fly / latest-plan / open-browser`
-- `uom_probe.py`
-  - 只放无副作用探测流程
 - `uom_semiauto.py`
   - 只放半自动提交流程
+- `uom_selection_debug.py`
+  - 只放“航空器/操控员内部选中状态”专项调试流程
 
 这样做的目的：
 - 不再让 `uom_core.py` 同时充当 CLI 大杂烩
-- 登录/状态、无副作用探测、半自动提交流程各自独立
+- 登录/状态、半自动提交流程、专项调试各自独立
 - 公共底层能力只维护一份，避免重复逻辑漂移
+- 不再保留一个和半自动流程高度重叠的旧 probe 脚本
 
 ## 推荐用法
 
@@ -34,16 +35,16 @@ python3 uom_login.py latest-plan
 python3 uom_login.py open-browser
 ```
 
-无副作用探测：
-
-```bash
-python3 uom_probe.py
-```
-
 半自动流程：
 
 ```bash
 python3 uom_semiauto.py
+```
+
+专项调试：
+
+```bash
+python3 uom_selection_debug.py
 ```
 
 ## 各文件职责
@@ -72,18 +73,21 @@ python3 uom_semiauto.py
 - 查看最近计划
 - 打开持久化浏览器给人工检查
 
-### 3. `uom_probe.py`
-专门负责：
-- 在不提交的前提下打开新增页
-- 探测航空器/操控员弹层、组件结构、选择器状态
-
-### 4. `uom_semiauto.py`
+### 3. `uom_semiauto.py`
 专门负责：
 - 自动进入新增页
 - 填入最近计划内容
 - 输出 precheck / postcheck
 - 让你人工确认
 - 再尝试触发提交
+
+### 4. `uom_selection_debug.py`
+专门负责：
+- 自动进入新增页
+- 自动填表
+- 不走最终提交流程
+- 聚焦航空器/操控员内部选中状态
+- 输出 data/ref/dialog/validate 相关线索
 
 ## 当前状态
 
@@ -103,26 +107,25 @@ python3 uom_semiauto.py
 
 ## 当前建议阅读顺序
 
-1. `uom_core.py`
+1. `HANDOFF_UOM_PROJECT.md`
+   - 当前完整交接文档
+2. `uom_core.py`
    - 当前底层能力实现
-2. `uom_login.py`
+3. `uom_login.py`
    - 登录/状态入口
-3. `uom_probe.py`
-   - 无副作用探测流程
 4. `uom_semiauto.py`
    - 半自动提交流程
-5. `HANDOFF_UOM_PROJECT.md`
-6. `PROJECT_STATUS.md`
-7. `SKILL.md`
+5. `uom_selection_debug.py`
+   - 内部选中状态专项调试流程
+6. `SKILL.md`
 
 ## 当前现役文件
 
 - `uom_core.py`
 - `uom_login.py`
-- `uom_probe.py`
 - `uom_semiauto.py`
+- `uom_selection_debug.py`
 - `HANDOFF_UOM_PROJECT.md`
-- `PROJECT_STATUS.md`
 - `SKILL.md`
 - `config.json`
 - `config_temp.json`
@@ -130,5 +133,6 @@ python3 uom_semiauto.py
 
 ## 备注
 
-- `SKILL.md` 是项目内最新说明文档，涉及脚本职责、默认命令、时间规则、阻塞点时优先看它
-- 如果后续继续开发，优先围绕 `uom_core.py` 补底层能力；围绕 `uom_probe.py` / `uom_semiauto.py` 调整具体流程
+- 详细说明统一看 `HANDOFF_UOM_PROJECT.md`
+- `SKILL.md` 是项目内最新操作说明文档，涉及脚本职责、默认命令、时间规则、阻塞点时优先看它
+- 如果后续继续开发，优先围绕 `uom_core.py` 补底层能力；围绕 `uom_semiauto.py` / `uom_selection_debug.py` 调整具体流程

@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-uom_probe.py - UOM 无副作用探测流程
+uom_selection_debug.py - UOM 航空器/操控员内部选中状态专项调试
 
 职责：
 - 复用持久化浏览器登录态
 - 自动进入一般飞行活动并打开新增页
-- 不执行最终提交
-- 重点探测航空器/操控员选择弹层与组件结构
+- 自动填入最近计划内容和目标时间
+- 不走最终提交流程
+- 专门输出航空器/操控员相关 data/ref/dialog/validate 线索
 
 用法：
-  python3 uom_probe.py
+  python3 uom_selection_debug.py
 """
 
 import json
@@ -18,13 +19,13 @@ import uom_core as core
 
 
 def main():
-    print('UOM 无副作用调试：探测新增页航空器/操控员选择弹层结构')
+    print('UOM 选择器专项调试：定位 uavs/drivers 为什么仍未被前端认定为已选中')
     playwright_handle, context, page = core.launch_context(headless=False)
     try:
         status = core.ensure_main_page(page)
         print('主站状态:')
         print(json.dumps(status, ensure_ascii=False, indent=2))
-        core.require_reliable_main_login(status, context, '当前落在登录页或主站框架未真正加载，停止无副作用调试，避免消耗短信验证码。')
+        core.require_reliable_main_login(status, context, '当前不在可靠的主站已登录状态，停止专项调试，避免在错误页面上继续执行。')
         print('进入 一般飞行活动 ...')
         core.open_fly_activity(page)
         core.time.sleep(12)
@@ -45,10 +46,21 @@ def main():
         if not fly_add:
             context.close()
             raise SystemExit(1)
+        fill = core.fill_new_form_from_detail(page, detail, next_beg, next_end)
+        print('填充结果:')
+        print(json.dumps(fill, ensure_ascii=False, indent=2)[:4000])
+        precheck = core.get_form_debug_snapshot(page, 'selection_debug_precheck')
+        print('自动填充后的前端校验/快照:')
+        print(json.dumps(precheck, ensure_ascii=False, indent=2)[:5000])
         inspect = core.inspect_add_dialogs(page, detail, next_beg, next_end)
-        print('弹层探测结果:')
+        print('航空器/操控员弹层与结构探测结果:')
         print(json.dumps(inspect, ensure_ascii=False, indent=2)[:12000])
-        input('探测完成。按回车关闭浏览器...')
+        print('\n这个脚本不会自动提交。')
+        print('请重点观察：')
+        print('1. precheck 里 fields 是否仍然包含 uavs / drivers')
+        print('2. inspect 里 visibleDialogs / refKeys / dataKeys 有没有选择器线索')
+        print('3. 页面上是否真的弹出过航空器/操控员相关弹层')
+        input('观察完成后，按回车关闭浏览器...')
     finally:
         core.close_context(playwright_handle, context)
 

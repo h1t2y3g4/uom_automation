@@ -1,6 +1,6 @@
 ---
 name: uom-automation
-description: UOM 自动化项目当前主线：uom_core.py 底层能力 + uom_login.py / uom_probe.py / uom_semiauto.py 分离入口。
+description: UOM 自动化项目当前主线：uom_core.py 底层能力 + uom_login.py / uom_semiauto.py / uom_selection_debug.py 分离入口。
 tags: [uom, drone, automation, caac, 无人机, 飞行申请]
 ---
 
@@ -22,8 +22,8 @@ tags: [uom, drone, automation, caac, 无人机, 飞行申请]
 - 当前主线已经重构为：
   - `uom_core.py`：只放底层能力
   - `uom_login.py`：专门处理登录/状态
-  - `uom_probe.py`：只放无副作用探测流程
   - `uom_semiauto.py`：只放半自动提交流程
+  - `uom_selection_debug.py`：只放内部选中状态专项调试
 - 当前阻塞点是：页面上已经显示航空器和操控员行，不等于前端校验已经认定它们被正式选中
 
 ## 用户期望（重要）
@@ -47,7 +47,7 @@ tags: [uom, drone, automation, caac, 无人机, 飞行申请]
   - 检测两层认证：
     1. 主站 NROS 登录态
     2. 飞行活动 iframe 的 oapi 认证态（`PUB-Token + ticket + userName`）
-  - 支持读取最近计划、打开新增页、填充表单、触发提交、无副作用探测等公共函数
+  - 支持读取最近计划、打开新增页、填充表单、触发提交、专项调试等公共函数
 
 ### 登录/状态入口
 - `uom_login.py`
@@ -58,13 +58,6 @@ tags: [uom, drone, automation, caac, 无人机, 飞行申请]
     - 查看最近计划
     - 只打开浏览器供人工检查
 
-### 无副作用探测入口
-- `uom_probe.py`
-  - 专门负责：
-    - 自动进入新增页
-    - 不提交
-    - 探测弹层、组件结构、选择器状态
-
 ### 半自动业务验证入口
 - `uom_semiauto.py`
   - 专门负责：
@@ -74,12 +67,22 @@ tags: [uom, drone, automation, caac, 无人机, 飞行申请]
     - 再尝试提交并检查最近计划是否变化
   - 它仍只是“更接近人工”的 `stepwise-lite`，不能宣称已实现完整人工式逐步选择
 
+### 内部选中状态专项调试入口
+- `uom_selection_debug.py`
+  - 专门负责：
+    - 自动进入新增页
+    - 自动填表
+    - 不走最终提交流程
+    - 输出 data/ref/dialog/validate 相关线索
+    - 聚焦 `uavs / drivers` 为什么仍不被前端认定为已选中
+
 ### 已不应再当主线的旧方案
 不要再把下面这些当成当前正确路线：
 - 旧版 `login.py` / `quick_login.py` / `submit.py`
 - 旧版纯 API 提交思路
 - RSAL 加密整包登录思路
 - 直接手工 POST `/oapi/pub/planInfo` 作为主方案
+- 与半自动流程高度重叠的旧 `probe` 脚本思路
 
 ## 当前脚本用法
 
@@ -92,14 +95,14 @@ python3 uom_login.py latest-plan
 python3 uom_login.py open-browser
 ```
 
-### 无副作用探测
-```bash
-python3 uom_probe.py
-```
-
 ### 半自动流程
 ```bash
 python3 uom_semiauto.py
+```
+
+### 内部选中状态专项调试
+```bash
+python3 uom_selection_debug.py
 ```
 
 ## 当前确认无误的认证模型
@@ -213,16 +216,11 @@ GET /oapi/pub/planInfo/{planId}
 当前主线默认使用：
 - `get_next_tuesday_same_time(...)`
 
-## 三个主要入口的区别
+## 主要入口的区别
 
 ### `uom_login.py`
 - 偏基础能力与状态检查
 - 用来确认登录态、业务页进入能力、最近计划读取是否正常
-
-### `uom_probe.py`
-- 无副作用探测
-- 用来观察新增页弹层、选择器、组件结构
-- 不应把它当成会提交的流程
 
 ### `uom_semiauto.py`
 - 半自动业务验证
@@ -230,6 +228,12 @@ GET /oapi/pub/planInfo/{planId}
 - 记录 precheck / postcheck
 - 让用户肉眼确认
 - 再尝试提交并检查最近计划是否变化
+
+### `uom_selection_debug.py`
+- 专项调试
+- 不提交
+- 用来观察新增页弹层、选择器、data/ref/validate 线索
+- 比旧 probe 更贴近当前真正阻塞点
 
 ## 当前阻塞点
 
@@ -244,22 +248,22 @@ GET /oapi/pub/planInfo/{planId}
 当任务涉及这个项目时，先做下面这件事：
 1. 读取 `~/hermes_interface/uom-automation/SKILL.md`
 2. 再看 `~/hermes_interface/uom-automation/README.md`
-3. 根据任务性质选择：
+3. 详细交接说明统一看 `~/hermes_interface/uom-automation/HANDOFF_UOM_PROJECT.md`
+4. 根据任务性质选择：
    - 登录/状态：`uom_login.py`
-   - 结构探测：`uom_probe.py`
    - 半自动流程：`uom_semiauto.py`
+   - 内部选中状态专项调试：`uom_selection_debug.py`
 
 必要时再看：
 - `uom_core.py`
 - `HANDOFF_UOM_PROJECT.md`
-- `PROJECT_STATUS.md`
 - `references/login-state-false-positive-and-menu-not-found-2026-05-18.md`
 
 ## 常见误区
 
 1. 不要继续依赖过时的全局说明做细节决策。
 2. 不要把历史会话里已经被推翻的旧登录/API 方案当主线。
-3. 不要在 `uom_probe.py` / `uom_semiauto.py` 里复制底层能力实现；公共逻辑应回到 `uom_core.py`。
+3. 不要在 `uom_semiauto.py` / `uom_selection_debug.py` 里复制底层能力实现；公共逻辑应回到 `uom_core.py`。
 4. 不要跳过项目内 `SKILL.md`，尤其是在提交、登录复用、时间生成规则这些地方。
 
 ## 结论
@@ -267,6 +271,10 @@ GET /oapi/pub/planInfo/{planId}
 当前 UOM 自动化项目的详细、最新、可执行说明，以：
 `~/hermes_interface/uom-automation/SKILL.md`
 为第一优先来源。
+
+完整交接说明以：
+`~/hermes_interface/uom-automation/HANDOFF_UOM_PROJECT.md`
+为准。
 
 公共底层实现以：
 `~/hermes_interface/uom-automation/uom_core.py`
