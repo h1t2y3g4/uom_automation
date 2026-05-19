@@ -38,10 +38,21 @@ BASE_URL = "https://uom.caac.gov.cn"
 MANUAL_SELECTION_LOG = SCRIPT_DIR / "manual_selection_log.json"
 
 
-def get_next_weekday_same_time(plan_beg: str, plan_end: str, target_weekday: int):
+def get_debug_target_plan_time(plan_beg: str, plan_end: str):
     b = datetime.strptime(plan_beg, '%Y-%m-%d %H:%M:%S')
     e = datetime.strptime(plan_end, '%Y-%m-%d %H:%M:%S')
-    days_ahead = (target_weekday - b.weekday()) % 7
+    target_date = datetime.now().date() + timedelta(days=1)
+    nb = datetime.combine(target_date, b.time())
+    ne = datetime.combine(target_date, e.time())
+    if ne <= nb:
+        ne = ne + timedelta(days=1)
+    return nb.strftime('%Y-%m-%d %H:%M:%S'), ne.strftime('%Y-%m-%d %H:%M:%S')
+
+
+def get_next_monday_same_time(plan_beg: str, plan_end: str):
+    b = datetime.strptime(plan_beg, '%Y-%m-%d %H:%M:%S')
+    e = datetime.strptime(plan_end, '%Y-%m-%d %H:%M:%S')
+    days_ahead = (0 - b.weekday()) % 7
     if days_ahead == 0:
         days_ahead = 7
     nb = b + timedelta(days=days_ahead)
@@ -49,12 +60,28 @@ def get_next_weekday_same_time(plan_beg: str, plan_end: str, target_weekday: int
     return nb.strftime('%Y-%m-%d %H:%M:%S'), ne.strftime('%Y-%m-%d %H:%M:%S')
 
 
-def get_next_monday_same_time(plan_beg: str, plan_end: str):
-    return get_next_weekday_same_time(plan_beg, plan_end, 0)
+def get_tomorrow_same_time(plan_beg: str, plan_end: str):
+    b = datetime.strptime(plan_beg, '%Y-%m-%d %H:%M:%S')
+    e = datetime.strptime(plan_end, '%Y-%m-%d %H:%M:%S')
+    nb = b + timedelta(days=1)
+    ne = e + timedelta(days=1)
+    return nb.strftime('%Y-%m-%d %H:%M:%S'), ne.strftime('%Y-%m-%d %H:%M:%S')
 
 
 def get_next_tuesday_same_time(plan_beg: str, plan_end: str):
-    return get_next_weekday_same_time(plan_beg, plan_end, 1)
+    return get_debug_target_plan_time(plan_beg, plan_end)
+
+
+def sanitize_for_json(value):
+    if isinstance(value, dict):
+        return {str(k): sanitize_for_json(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [sanitize_for_json(v) for v in value]
+    if isinstance(value, datetime):
+        return value.isoformat(sep=' ')
+    if isinstance(value, Path):
+        return str(value)
+    return value
 
 
 def load_config():
@@ -151,6 +178,62 @@ def dismiss_popup(page):
         )
     except Exception:
         pass
+
+
+def handle_system_error(page, max_refresh=2):
+    for _ in range(max_refresh):
+        try:
+            res = page.evaluate(
+                r"""
+                () => {
+                    function norm(s) {
+                        return (s || '').replace(/\s+/g, ' ').trim();
+                    }
+                    function visible(el) {
+                        return !!(el && el.offsetParent !== null);
+                    }
+                    function clickish(el) {
+                        if (!el) return false;
+                        el.scrollIntoView({block: 'center', inline: 'center'});
+                        for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click']) {
+                            el.dispatchEvent(new MouseEvent(type, {bubbles:true, cancelable:true, view:window}));
+                        }
+                        return true;
+                    }
+                    const nodes = Array.from(document.querySelectorAll('div,span,button,a'));
+                    const visibleTexts = nodes
+                        .map(el => ({
+                            el,
+                            text: norm(el.textContent || ''),
+                            visible: visible(el)
+                        }))
+                        .filter(x => x.visible && x.text);
+                    const hasSystemError = visibleTexts.some(x => /系统错误/.test(x.text));
+                    if (!hasSystemError) return {handled:false, found:false};
+                    const refresh = visibleTexts.find(x => x.text === '刷新');
+                    const ignore = visibleTexts.find(x => x.text === '忽略');
+                    if (refresh) {
+                        clickish(refresh.el);
+                        return {handled:true, found:true, action:'refresh'};
+                    }
+                    if (ignore) {
+                        clickish(ignore.el);
+                        return {handled:true, found:true, action:'ignore'};
+                    }
+                    return {
+                        handled:false,
+                        found:true,
+                        texts: visibleTexts.filter(x => /系统错误|刷新|忽略/.test(x.text)).map(x => x.text).slice(0, 20)
+                    };
+                }
+                """
+            )
+        except Exception:
+            res = {"handled": False, "found": False}
+        if not res.get("found"):
+            return res
+        time.sleep(3)
+    return {"handled": False, "found": True, "error": "system error persisted"}
 
 
 def wait_for_login_component(page, timeout_s=20):
@@ -360,85 +443,109 @@ def open_fly_activity(page):
     page.goto(f"{BASE_URL}/#/main", wait_until="domcontentloaded", timeout=60000)
     time.sleep(3)
     dismiss_popup(page)
-    js = r"""
-    () => {
-        const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-        function norm(s) {
-            return (s || '').replace(/\s+/g, ' ').trim();
-        }
-        function visible(el) {
-            if (!el) return false;
-            const style = window.getComputedStyle(el);
-            if (!style || style.visibility === 'hidden' || style.display === 'none') return false;
-            const rect = el.getBoundingClientRect();
-            return rect.width > 0 && rect.height > 0;
-        }
-        function clickish(el) {
-            if (!el) return false;
-            el.scrollIntoView({block: 'center', inline: 'center'});
-            for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click']) {
-                el.dispatchEvent(new MouseEvent(type, {bubbles:true, cancelable:true, view:window}));
-            }
-            return true;
-        }
-        function findBest(regex, classHints=[]) {
-            const els = Array.from(document.querySelectorAll('div,span,li,a,button,i,p'));
-            const scored = [];
-            for (const el of els) {
-                const text = norm(el.textContent || '');
-                if (!text || !regex.test(text)) continue;
-                const cls = (el.className || '').toString();
-                const score = (visible(el) ? 100 : 0)
-                    + (classHints.some(c => cls.includes(c)) ? 30 : 0)
-                    + (/menu|nav|item|sub|title/i.test(cls) ? 10 : 0)
-                    - Math.abs(text.length - String(regex).length);
-                scored.push({el, text, cls, score});
-            }
-            scored.sort((a, b) => b.score - a.score);
-            return scored[0] || null;
-        }
 
-        return (async () => {
-            const top = findBest(/^运行管理$/);
-            if (top) {
-                clickish(top.el);
-                await sleep(800);
-            }
-            const leftExpand = findBest(/^飞行活动申请$/);
-            if (leftExpand) {
-                clickish(leftExpand.el);
-                await sleep(1200);
-            }
-            const general = findBest(/^一般飞行活动$/, ['ivu-menu-item', 'menuitem', 'el-menu-item']);
-            if (general) {
-                clickish(general.el);
-                return {ok:true, clicked:{top: top && top.text, leftExpand: leftExpand && leftExpand.text, general: general.text}};
-            }
-            return {
-                ok:false,
-                error:'一般飞行活动菜单未找到',
-                debug:{
-                    top: top ? {text: top.text, cls: top.cls} : null,
-                    leftExpand: leftExpand ? {text: leftExpand.text, cls: leftExpand.cls} : null,
-                    menuTexts: Array.from(document.querySelectorAll('div,span,li,a,button')).map(el => norm(el.textContent || '')).filter(Boolean).filter(t => /运行管理|飞行活动申请|一般飞行活动/.test(t)).slice(0, 30)
+    direct_res = page.evaluate(
+        r"""
+        () => {
+            const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+            const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+            const app = document.querySelector('#app');
+            if (!app || !app.__vue__) return {ok:false, error:'no vue root'};
+            let layout = null;
+            const seen = new Set();
+            function walk(vm, depth) {
+                if (!vm || depth > 8 || seen.has(vm)) return;
+                seen.add(vm);
+                const name = (vm.$options && (vm.$options.name || vm.$options._componentTag)) || '';
+                if (name === 'Layout') {
+                    layout = vm;
+                    return;
                 }
-            };
-        })();
-    }
-    """
-    res = page.evaluate(js)
-    if not res.get("ok"):
-        raise RuntimeError({**res, "snapshot": debug_menu_snapshot(page)})
-    deadline = time.time() + 30
+                for (const c of (vm.$children || [])) walk(c, depth + 1);
+            }
+            walk(app.__vue__, 0);
+            if (!layout) return {ok:false, error:'layout not found'};
+            const tree = (layout.$data && layout.$data.menuTree) || [];
+            let item = null;
+            for (const x of tree) {
+                if (x && x.value === 'a2e16537-2fa4-4ca6-a935-1baf0efb111e') item = x;
+                if (!item && x && Array.isArray(x.children)) {
+                    for (const c of x.children) {
+                        if (c && c.value === 'a2e16537-2fa4-4ca6-a935-1baf0efb111e') item = c;
+                    }
+                }
+            }
+            if (!item) {
+                return {
+                    ok:false,
+                    error:'一般飞行活动 menuTree 节点未找到',
+                    menuLabels: tree.map(x => x && (x.__label || x.label || x.title || '')).filter(Boolean).slice(0, 50)
+                };
+            }
+            if (typeof layout.openPage !== 'function') return {ok:false, error:'layout.openPage not available'};
+            try {
+                layout.openPage(item);
+                return {
+                    ok:true,
+                    path:'layout.openPage',
+                    item:{
+                        id:item.id,
+                        title:item.title,
+                        appName:item.appName,
+                        value:item.value,
+                        label:item.label,
+                        routeLabel:item.__label || null,
+                        routeValue:item.__value || null
+                    }
+                };
+            } catch (e) {
+                return {ok:false, error:'layout.openPage failed', detail:String(e)};
+            }
+        }
+        """
+    )
+    if not direct_res.get("ok"):
+        raise RuntimeError({"error": "直达一般飞行活动失败", "direct": direct_res, "snapshot": debug_menu_snapshot(page)})
+    time.sleep(2)
+    err_res = handle_system_error(page, max_refresh=3)
+    frame_debug = page.evaluate(
+        r"""
+        () => ({
+            iframeCount: document.querySelectorAll('iframe').length,
+            anchors: Array.from(document.querySelectorAll('a,button,span,div'))
+                .map(el => ((el.textContent || '').replace(/\s+/g, ' ').trim()))
+                .filter(Boolean)
+                .filter(t => /一般飞行活动|飞行活动申请|刷新|新增|系统错误|忽略/.test(t))
+                .slice(0, 30),
+            hash: location.hash || '',
+            href: location.href || ''
+        })
+        """
+    )
+    if frame_debug.get("iframeCount"):
+        return True
+    deadline = time.time() + 45
     while time.time() < deadline:
         try:
-            iframe_count = page.evaluate("() => document.querySelectorAll('iframe').length")
-            if iframe_count:
+            err_loop = handle_system_error(page, max_refresh=1)
+            state = page.evaluate(
+                r"""
+                () => ({
+                    iframeCount: document.querySelectorAll('iframe').length,
+                    hash: location.hash || '',
+                    href: location.href || '',
+                    bodyHead: ((document.body && document.body.innerText) || '').replace(/\s+/g, ' ').slice(0, 500)
+                })
+                """
+            )
+            if state.get("iframeCount"):
                 return True
+            if err_loop.get("found"):
+                time.sleep(2)
         except Exception:
             pass
         time.sleep(1)
-    raise RuntimeError({"error": "进入飞行活动页面失败：未出现 iframe", "snapshot": debug_menu_snapshot(page)})
+    raise RuntimeError({"error": "进入飞行活动页面失败：未出现 iframe", "direct": direct_res, "system_error": err_res, "frame_debug": frame_debug, "snapshot": debug_menu_snapshot(page)})
 
 
 def get_iframe_auth(page):
@@ -519,7 +626,7 @@ def get_latest_plan(page):
                 credentials: 'include'
             });
             const data = await resp.json();
-            const rows = data && data.data && (data.data.rows || data.data.list || data.rows || data.list) || [];
+            const rows = (data && data.data && data.data.rows) || data.rows || (data && data.data && data.data.list) || data.list || [];
             return {ok: true, total: rows.length, latest: rows[0] || null, data};
         }
         """
@@ -629,7 +736,9 @@ def open_new_fly_form(page):
 def fill_new_form_from_detail(page, detail, plan_beg_new, plan_end_new):
     return page.evaluate(
         r"""
-        ([detail, planBegNew, planEndNew]) => {
+        async ([detail, planBegNew, planEndNew]) => {
+            const STEP_SLEEP_MS = 2000;
+            const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
             const iframe = document.querySelector('iframe');
             if (!iframe) return {ok:false, error:'no iframe'};
             const doc = iframe.contentDocument;
@@ -647,37 +756,315 @@ def fill_new_form_from_detail(page, detail, plan_beg_new, plan_end_new):
                 return null;
             }
 
+            function findComponentsWithFlag(vm, flagName, depth = 0, out = []) {
+                if (!vm || depth > 8 || out.length > 80) return out;
+                try {
+                    if (vm.$data && Object.prototype.hasOwnProperty.call(vm.$data, flagName)) out.push(vm);
+                } catch (e) {}
+                for (const c of (vm.$children || [])) findComponentsWithFlag(c, flagName, depth + 1, out);
+                return out;
+            }
+
+            function norm(text) {
+                return ((text || '').replace(/\s+/g, ' ').trim());
+            }
+
+            function isVisible(el) {
+                return !!(el && el.offsetParent !== null);
+            }
+
+            function dispatchClick(el) {
+                if (!el) return false;
+                el.scrollIntoView({block: 'center', inline: 'center'});
+                for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click']) {
+                    el.dispatchEvent(new MouseEvent(type, {bubbles:true, cancelable:true, view:window}));
+                }
+                return true;
+            }
+
             function visibleAddButtons(root) {
-                return Array.from(root.querySelectorAll('button,span,div,a')).filter(el => {
-                    const t = ((el.textContent || '').replace(/\s+/g, ' ').trim());
-                    return t === '添加' && el.offsetParent !== null;
+                return Array.from(root.querySelectorAll('button.addButton, button, span, div, a')).filter(el => {
+                    return norm(el.textContent) === '添加' && isVisible(el);
                 });
             }
 
-            function clickText(root, expected) {
-                const all = Array.from(root.querySelectorAll('button,span,div,a'));
-                for (const el of all) {
-                    const t = ((el.textContent || '').replace(/\s+/g, ' ').trim());
-                    if (t === expected && el.offsetParent !== null) {
-                        el.click();
+            function clone(obj) {
+                return obj == null ? obj : JSON.parse(JSON.stringify(obj));
+            }
+
+            function collectVisibleDialogs() {
+                const directMatches = Array.from(doc.querySelectorAll('.ivu-modal-wrap,.ivu-drawer-wrap,[role="dialog"],.el-dialog,.el-dialog__wrapper,.v-modal,.el-overlay,.el-message-box__wrapper'));
+                const broadMatches = Array.from(doc.querySelectorAll('div,section,aside'))
+                    .filter(el => isVisible(el))
+                    .filter(el => {
+                        const text = norm(el.innerText || el.textContent || '');
+                        return /选择我的航空器|选择我的操控员|确定取消|产品序列号\/出厂序号实名登记标志|执照编号姓名|执照编号执照种类/.test(text);
+                    });
+                const merged = [];
+                for (const el of [...directMatches, ...broadMatches]) {
+                    if (!el || !isVisible(el) || merged.includes(el)) continue;
+                    merged.push(el);
+                }
+                return merged.map(el => ({
+                        text: norm((el.innerText || '')).slice(0, 800),
+                        cls: (el.className || '').toString(),
+                        tag: el.tagName,
+                    }));
+            }
+
+            async function closeNoticeDialogIfPresent() {
+                const noticeOwners = findComponentsWithFlag(comp, 'showNoticeDialog');
+                for (let i = 0; i < 10; i++) {
+                    const visibleDialogs = collectVisibleDialogs();
+                    const notice = visibleDialogs.find(x => /温馨提示/.test(x.text || ''));
+                    const ownerStates = noticeOwners.map(vm => ({
+                        name: (vm.$options && (vm.$options.name || vm.$options._componentTag)) || '',
+                        value: vm.$data ? vm.$data.showNoticeDialog : undefined,
+                        methods: Object.keys(vm || {}).filter(k => typeof vm[k] === 'function' && /notice|dialog|close|know|confirm/i.test(k)).slice(0, 12),
+                    }));
+                    const allClosed = ownerStates.length ? ownerStates.every(x => x.value === false) : true;
+                    if (!notice && allClosed) return {ok:true, closed:true, attempts:i, remainingDialogs:visibleDialogs, ownerStates};
+
+                    let clicked = false;
+                    const buttons = Array.from(doc.querySelectorAll('button,span,div,a')).filter(isVisible);
+                    for (const el of buttons) {
+                        const t = norm(el.textContent);
+                        const cls = (el.className || '').toString();
+                        if (t === '我知道了' || (/dialog__footer/.test(cls) && /我知道了/.test(norm(el.innerText || '')))) {
+                            dispatchClick(el);
+                            clicked = true;
+                            break;
+                        }
+                    }
+
+                    for (const vm of noticeOwners) {
+                        try {
+                            if (vm.$data && Object.prototype.hasOwnProperty.call(vm.$data, 'showNoticeDialog')) {
+                                vm.$data.showNoticeDialog = false;
+                            }
+                            for (const key of Object.keys(vm)) {
+                                if (typeof vm[key] === 'function' && /notice|dialog|close|know|confirm/i.test(key)) {
+                                    try { vm[key](); clicked = true; } catch (e) {}
+                                }
+                            }
+                            if (typeof vm.$forceUpdate === 'function') vm.$forceUpdate();
+                        } catch (e) {}
+                    }
+                    if (typeof comp.$forceUpdate === 'function') comp.$forceUpdate();
+
+                    await sleep(STEP_SLEEP_MS);
+                    const stillVisible = collectVisibleDialogs().some(x => /温馨提示/.test(x.text || ''));
+                    const ownerStatesAfter = noticeOwners.map(vm => ({
+                        name: (vm.$options && (vm.$options.name || vm.$options._componentTag)) || '',
+                        value: vm.$data ? vm.$data.showNoticeDialog : undefined,
+                    }));
+                    const allClosedAfter = ownerStatesAfter.length ? ownerStatesAfter.every(x => x.value === false) : true;
+                    if (!stillVisible && allClosedAfter) {
+                        return {ok:true, closed:true, attempts:i + 1, remainingDialogs:collectVisibleDialogs(), ownerStates:ownerStatesAfter};
+                    }
+                    if (!clicked && !noticeOwners.length) {
+                        return {ok:false, error:'notice dialog visible but no clickable path or owner found', attempts:i, remainingDialogs:collectVisibleDialogs(), ownerStates:ownerStatesAfter};
+                    }
+                }
+                return {ok:false, error:'notice dialog still visible after retries', remainingDialogs:collectVisibleDialogs(), ownerStates:noticeOwners.map(vm => ({name:(vm.$options && (vm.$options.name || vm.$options._componentTag)) || '', value: vm.$data ? vm.$data.showNoticeDialog : undefined}))};
+            }
+
+            function findDialogByTitle(titleRegex) {
+                const direct = Array.from(doc.querySelectorAll('.ivu-modal-wrap,.ivu-drawer-wrap,[role="dialog"],.el-dialog,.el-dialog__wrapper,.el-message-box__wrapper,.el-overlay,.v-modal'))
+                    .filter(el => isVisible(el) && titleRegex.test(norm(el.innerText || el.textContent || '')));
+                if (direct.length) return direct[direct.length - 1];
+                const broad = Array.from(doc.querySelectorAll('div,section,aside'))
+                    .filter(el => isVisible(el) && titleRegex.test(norm(el.innerText || el.textContent || '')))
+                    .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
+                if (broad.length) return broad[0];
+                if (/选择我的航空器/.test(String(titleRegex))) {
+                    const uavInfo = Array.from(doc.querySelectorAll('div,section,aside'))
+                        .filter(el => isVisible(el) && /(app-container\s+uavInfo|\buavInfo\b)/.test((el.className || '').toString()))
+                        .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
+                    if (uavInfo.length) return uavInfo[0];
+                }
+                if (/选择我的操控员|选择操控员/.test(String(titleRegex))) {
+                    const driverInfo = Array.from(doc.querySelectorAll('div,section,aside'))
+                        .filter(el => isVisible(el) && /(app-container\s+driverInfo|\bdriverInfo\b|app-container\s+operator|\boperator\b)/.test((el.className || '').toString()))
+                        .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
+                    if (driverInfo.length) return driverInfo[0];
+                }
+                return null;
+            }
+
+            function selectRowInDialog(dialogEl, keyword) {
+                if (!dialogEl || !keyword) return {ok:false, error:'missing dialog or keyword'};
+                const rows = Array.from(dialogEl.querySelectorAll('tr')).filter(isVisible);
+                const altKeywords = Array.from(new Set(String(keyword).split(/\s+/).map(s => s.trim()).filter(Boolean)));
+                for (const row of rows) {
+                    const text = norm(row.innerText || row.textContent || '');
+                    if (!text) continue;
+                    if (text.includes(keyword) || altKeywords.some(k => k && text.includes(k))) {
+                        const checkbox = row.querySelector('.el-checkbox__original, input[type="checkbox"]');
+                        const checkboxWrap = row.querySelector('.el-checkbox, .el-checkbox__input, label');
+                        if (checkbox) {
+                            checkbox.scrollIntoView({block: 'center', inline: 'center'});
+                            if (!checkbox.checked) checkbox.click();
+                            if (!checkbox.checked && checkboxWrap) dispatchClick(checkboxWrap);
+                            if (!checkbox.checked) dispatchClick(row);
+                            return {ok:!!checkbox.checked, method:'checkbox', text:text.slice(0, 200), checked:!!checkbox.checked, keyword, altKeywords};
+                        }
+                        dispatchClick(row);
+                        return {ok:true, method:'row', text:text.slice(0, 200), keyword, altKeywords};
+                    }
+                }
+                return {ok:false, error:'row not found', keyword, altKeywords, availableRows: rows.map(row => norm(row.innerText || row.textContent || '').slice(0, 200)).filter(Boolean).slice(0, 10)};
+            }
+
+            function clickDialogConfirm(dialogEl) {
+                if (!dialogEl) return {ok:false, error:'no dialog'};
+                const candidates = Array.from(dialogEl.querySelectorAll('button,span,div,a')).filter(isVisible);
+                for (const el of candidates) {
+                    const t = norm(el.textContent);
+                    if (t === '确定') {
+                        dispatchClick(el);
                         return {ok:true, text:t, tag:el.tagName, cls:(el.className || '').toString()};
                     }
                 }
-                return {ok:false, text:expected};
+                return {ok:false, error:'confirm button not found'};
+            }
+
+            function sectionTitleFor(el) {
+                let node = el;
+                for (let i = 0; node && i < 8; i++, node = node.parentElement) {
+                    const text = norm(node.innerText || node.textContent || '');
+                    if (/航空器信息/.test(text)) return 'uav';
+                    if (/操控员信息/.test(text)) return 'driver';
+                    if (/飞行空域信息/.test(text)) return 'space';
+                }
+                return '';
+            }
+
+            function describeAddButton(el, index) {
+                if (!el) return null;
+                const parent = el.parentElement;
+                const row = parent ? parent.parentElement : null;
+                return {
+                    index,
+                    text: norm(el.textContent),
+                    tag: el.tagName,
+                    cls: (el.className || '').toString(),
+                    section: sectionTitleFor(el),
+                    parentText: norm(parent && (parent.innerText || parent.textContent || '')).slice(0, 160),
+                    rowText: norm(row && (row.innerText || row.textContent || '')).slice(0, 220),
+                };
+            }
+
+            function listAddButtons(root) {
+                return visibleAddButtons(root).map((el, index) => ({el, meta: describeAddButton(el, index)}));
+            }
+
+            function findAddButtonBySection(root, section) {
+                const buttons = listAddButtons(root);
+                const buttonTagPreferred = buttons.find(x => x.meta && x.meta.section === section && x.el && x.el.tagName === 'BUTTON' && /\baddButton\b/.test((x.el.className || '').toString()));
+                if (buttonTagPreferred) return buttonTagPreferred;
+                const buttonPreferred = buttons.find(x => x.meta && x.meta.section === section && x.el && x.el.tagName === 'BUTTON');
+                if (buttonPreferred) return buttonPreferred;
+                const spanPreferred = buttons.find(x => x.meta && x.meta.section === section && x.el && x.el.tagName === 'SPAN');
+                if (spanPreferred) return spanPreferred;
+                const exact = buttons.find(x => x.meta && x.meta.section === section);
+                if (exact) return exact;
+                const fallbackButton = buttons.find(x => x.el && x.el.tagName === 'BUTTON');
+                if (fallbackButton) return fallbackButton;
+                return section === 'uav' ? buttons[0] || null : buttons[1] || null;
+            }
+
+            function dumpVueComponentNames(vm, depth = 0, out = []) {
+                if (!vm || depth > 6 || out.length > 160) return out;
+                const name = (vm.$options && (vm.$options.name || vm.$options._componentTag)) || '';
+                out.push({
+                    depth,
+                    name,
+                    refKeys: vm.$refs ? Object.keys(vm.$refs).slice(0, 12) : [],
+                    dataKeys: Object.keys(vm.$data || {}).filter(k => /uav|driver|select|check|space|dialog|table|choose|row|current/i.test(k)).slice(0, 20),
+                });
+                for (const c of (vm.$children || [])) dumpVueComponentNames(c, depth + 1, out);
+                return out;
+            }
+
+            function tryInvoke(obj, key, ...args) {
+                try {
+                    if (obj && typeof obj[key] === 'function') {
+                        return {ok:true, value: obj[key](...args)};
+                    }
+                } catch (e) {
+                    return {ok:false, error:e.message};
+                }
+                return {ok:false, missing:true};
+            }
+
+            function setValidationLikeState(comp, sourceUav, sourceDriver) {
+                const notes = [];
+                if ('uavInfoCheck' in comp.$data) {
+                    comp.$data.uavInfoCheck = !!(sourceUav);
+                    notes.push('set uavInfoCheck');
+                }
+                if ('selectMap' in comp.$data && sourceUav) {
+                    comp.$data.selectMap = sourceUav.uasCode || sourceUav.sn || 'selected';
+                    notes.push('set selectMap');
+                }
+                if (Array.isArray(comp.$data.checkList)) {
+                    const values = [];
+                    if (sourceUav && (sourceUav.uasCode || sourceUav.sn)) values.push(sourceUav.uasCode || sourceUav.sn);
+                    if (sourceDriver && (sourceDriver.name || sourceDriver.cardno)) values.push(sourceDriver.name || sourceDriver.cardno);
+                    comp.$data.checkList = Array.from(new Set([...(comp.$data.checkList || []), ...values]));
+                    notes.push('extended checkList');
+                }
+                if ('noCheckFlag' in comp.$data) {
+                    comp.$data.noCheckFlag = false;
+                    notes.push('set noCheckFlag=false');
+                }
+                return notes;
             }
 
             const comp = findMainForm(app.__vue__, 0);
             if (!comp) return {ok:false, error:'FLY_INDEX_ADD not found'};
             const f = comp.$data.form || {};
+            const noticeOwners = findComponentsWithFlag(comp, 'showNoticeDialog').map(vm => ({
+                name: (vm.$options && (vm.$options.name || vm.$options._componentTag)) || '',
+                value: vm.$data ? vm.$data.showNoticeDialog : undefined,
+                dataKeys: Object.keys(vm.$data || {}).slice(0, 20),
+            }));
             const beforeKeys = Object.keys(comp.$data || {}).filter(k => /uav|driver|select|check|space|dialog|table|choose/i.test(k));
             const sourceSpace = (detail.spaces && detail.spaces[0]) || {};
-            const sourceUav = Array.isArray(detail.uavs) && detail.uavs.length ? JSON.parse(JSON.stringify(detail.uavs[0])) : null;
-            const sourceDriver = Array.isArray(detail.drivers) && detail.drivers.length ? JSON.parse(JSON.stringify(detail.drivers[0])) : null;
+            const sourceUav = Array.isArray(detail.uavs) && detail.uavs.length ? clone(detail.uavs[0]) : null;
+            const sourceDriver = Array.isArray(detail.drivers) && detail.drivers.length ? clone(detail.drivers[0]) : null;
 
-            const clickedNotice = clickText(doc, '我知道了');
-            const addButtons = visibleAddButtons(doc);
-            const clickedUavAdd = addButtons[0] ? (() => { addButtons[0].click(); return {ok:true, index:0}; })() : {ok:false};
-            const clickedDriverAdd = addButtons[1] ? (() => { addButtons[1].click(); return {ok:true, index:1}; })() : {ok:false};
+            const noticeHandling = await closeNoticeDialogIfPresent();
+            await sleep(STEP_SLEEP_MS);
+            const addButtonsBefore = listAddButtons(doc).map(x => x.meta);
+
+            const uavAddButton = findAddButtonBySection(doc, 'uav');
+            const clickedUavAdd = uavAddButton ? (() => { dispatchClick(uavAddButton.el); return {...uavAddButton.meta, ok:true, outerHTML: (uavAddButton.el.outerHTML || '').slice(0, 400)}; })() : {ok:false};
+            await sleep(STEP_SLEEP_MS);
+            const uavPickDialog = findDialogByTitle(/选择我的航空器/);
+            const uavDialogCandidates = collectVisibleDialogs();
+            const uavSelectionKeyword = sourceUav ? [sourceUav.uasCode, sourceUav.sn, sourceUav.proName, sourceUav.proMode].filter(Boolean).join(' ') : '';
+            const uavSelection = uavPickDialog && sourceUav ? selectRowInDialog(uavPickDialog, uavSelectionKeyword) : {ok:false, error:'uav dialog not found', dialogs:uavDialogCandidates};
+            await sleep(STEP_SLEEP_MS);
+            const uavConfirm = uavPickDialog ? clickDialogConfirm(uavPickDialog) : {ok:false, error:'uav dialog not found', dialogs:uavDialogCandidates};
+            await sleep(STEP_SLEEP_MS);
+            const uavDialogsAfterClick = collectVisibleDialogs();
+            const uavVueAfterClick = dumpVueComponentNames(comp);
+
+            const shouldOpenDriverDialog = !!(uavSelection && uavSelection.ok && uavConfirm && uavConfirm.ok);
+            const driverAddButton = findAddButtonBySection(doc, 'driver');
+            const clickedDriverAdd = shouldOpenDriverDialog && driverAddButton ? (() => { dispatchClick(driverAddButton.el); return {...driverAddButton.meta, ok:true, outerHTML: (driverAddButton.el.outerHTML || '').slice(0, 400)}; })() : {ok:false, skipped:true, reason:'uav selection/confirm not completed'};
+            await sleep(STEP_SLEEP_MS);
+            const driverPickDialog = shouldOpenDriverDialog ? findDialogByTitle(/选择我的操控员|选择操控员/) : null;
+            const driverDialogCandidates = collectVisibleDialogs();
+            const driverSelectionKeyword = sourceDriver ? [sourceDriver.name, sourceDriver.cardno, sourceDriver.phone].filter(Boolean).join(' ') : '';
+            const driverSelection = driverPickDialog && sourceDriver ? selectRowInDialog(driverPickDialog, driverSelectionKeyword) : {ok:false, error:'driver dialog not found', dialogs:driverDialogCandidates};
+            await sleep(STEP_SLEEP_MS);
+            const driverConfirm = driverPickDialog ? clickDialogConfirm(driverPickDialog) : {ok:false, error:'driver dialog not found', dialogs:driverDialogCandidates};
+            await sleep(STEP_SLEEP_MS);
+            const driverDialogsAfterClick = collectVisibleDialogs();
+            const driverVueAfterClick = dumpVueComponentNames(comp);
 
             f.planBeg = planBegNew;
             f.planEnd = planEndNew;
@@ -706,43 +1093,87 @@ def fill_new_form_from_detail(page, detail, plan_beg_new, plan_end_new):
                     lineWidth: sourceSpace.lineWidth ?? null,
                 };
                 f.spaces = [space];
-                comp.$data.spaceList = [JSON.parse(JSON.stringify(space))];
-                comp.$data.oldSpaceList = [JSON.parse(JSON.stringify(space))];
-                try {
-                    if (typeof comp.callbackAddSpace === 'function') comp.callbackAddSpace([space]);
-                } catch (e) {}
+                comp.$data.spaceList = [clone(space)];
+                comp.$data.oldSpaceList = [clone(space)];
+                tryInvoke(comp, 'callbackAddSpace', [space]);
             }
 
-            if (sourceUav) {
+            const hookResults = {};
+            const candidatePickerComponents = [];
+            const allowProgrammaticBackfill = false;
+
+            if (allowProgrammaticBackfill && sourceUav) {
                 f.uavs = [sourceUav];
-                comp.$data.uavInfoList = [sourceUav];
-                try {
-                    if (typeof comp.callbackAddUavs === 'function') comp.callbackAddUavs([sourceUav]);
-                } catch (e) {}
+                comp.$data.uavInfoList = [clone(sourceUav)];
+                hookResults.callbackAddUavs = tryInvoke(comp, 'callbackAddUavs', [sourceUav]);
+                hookResults.handleSelectionChangeUav = tryInvoke(comp, 'handleSelectionChangeUav', [sourceUav]);
+                hookResults.handleCurrentChangeUav = tryInvoke(comp, 'handleCurrentChangeUav', sourceUav);
+                hookResults.selectUav = tryInvoke(comp, 'selectUav', sourceUav);
             }
 
-            if (sourceDriver) {
+            if (allowProgrammaticBackfill && sourceDriver) {
                 if (!sourceDriver.uasCodes && sourceUav && sourceUav.uasCode) sourceDriver.uasCodes = [sourceUav.uasCode];
                 f.drivers = [sourceDriver];
-                comp.$data.driverInfoList = [sourceDriver];
-                comp.$data.currentRowDriver = sourceDriver;
+                comp.$data.driverInfoList = [clone(sourceDriver)];
+                comp.$data.currentRowDriver = clone(sourceDriver);
+                if (Array.isArray(comp.$data.currentRowDriver)) comp.$data.currentRowDriver = clone(sourceDriver);
+                if (Array.isArray(comp.$data.currentRowDriver)) comp.$data.currentRowDriver = clone(sourceDriver[0] || sourceDriver);
                 comp.$data.selectDriverIndex = 0;
-                try {
-                    if (typeof comp.callbackAddDrivers === 'function') comp.callbackAddDrivers([sourceDriver]);
-                    if (typeof comp.handleSelectionDriverUavs === 'function' && sourceUav) comp.handleSelectionDriverUavs([sourceUav], sourceDriver);
-                } catch (e) {}
+                hookResults.callbackAddDrivers = tryInvoke(comp, 'callbackAddDrivers', [sourceDriver]);
+                hookResults.handleSelectionDriverUavs = tryInvoke(comp, 'handleSelectionDriverUavs', sourceUav ? [sourceUav] : [], sourceDriver);
+                hookResults.handleSelectionChangeDriver = tryInvoke(comp, 'handleSelectionChangeDriver', [sourceDriver]);
+                hookResults.handleCurrentChangeDriver = tryInvoke(comp, 'handleCurrentChangeDriver', sourceDriver);
+                hookResults.selectDriver = tryInvoke(comp, 'selectDriver', sourceDriver);
+                hookResults.currentRowDriverTypeAfterSet = Array.isArray(comp.$data.currentRowDriver) ? 'array' : typeof comp.$data.currentRowDriver;
+            }
+
+            if (allowProgrammaticBackfill) {
+                hookResults.validationStateTweaks = setValidationLikeState(comp, sourceUav, sourceDriver);
+            }
+
+            try {
+                const uavTable = comp.$refs && (comp.$refs.uavTable || comp.$refs.uavInfoTable || comp.$refs.tableUav || comp.$refs.tableUavs);
+                if (allowProgrammaticBackfill && uavTable && typeof uavTable.toggleRowSelection === 'function' && sourceUav) {
+                    uavTable.toggleRowSelection(sourceUav, true);
+                    hookResults.uavTableToggle = {ok:true};
+                }
+            } catch (e) {
+                hookResults.uavTableToggle = {ok:false, error:e.message};
+            }
+
+            try {
+                const driverTable = comp.$refs && (comp.$refs.driverTable || comp.$refs.driverInfoTable || comp.$refs.tableDriver || comp.$refs.tableDrivers);
+                if (allowProgrammaticBackfill && driverTable && typeof driverTable.toggleRowSelection === 'function' && sourceDriver) {
+                    driverTable.toggleRowSelection(sourceDriver, true);
+                    hookResults.driverTableToggle = {ok:true};
+                }
+            } catch (e) {
+                hookResults.driverTableToggle = {ok:false, error:e.message};
             }
 
             if (typeof comp.$forceUpdate === 'function') comp.$forceUpdate();
+            await sleep(STEP_SLEEP_MS);
             if (comp.$refs && comp.$refs.form && typeof comp.$refs.form.clearValidate === 'function') comp.$refs.form.clearValidate();
 
             return {
                 ok: true,
-                mode: 'stepwise-lite',
+                mode: 'stepwise-ui-plus-hooks',
                 compName: (comp.$options && (comp.$options.name || comp.$options._componentTag)) || '',
-                clickedNotice,
+                noticeHandling,
+                noticeOwners,
                 clickedUavAdd,
                 clickedDriverAdd,
+                uavSelection,
+                uavConfirm,
+                driverSelection,
+                driverConfirm,
+                addButtonsBefore,
+                uavDialogsAfterClick,
+                driverDialogsAfterClick,
+                uavVueAfterClick,
+                driverVueAfterClick,
+                hookResults,
+                candidatePickerComponents,
                 planBeg: f.planBeg,
                 planEnd: f.planEnd,
                 spcTop: f.spcTop,
@@ -792,6 +1223,15 @@ def update_copied_form_times(page, plan_beg_new, plan_end_new):
                 }
                 return null;
             }
+
+            function findComponentsWithFlag(vm, flagName, depth = 0, out = []) {
+                if (!vm || depth > 8 || out.length > 80) return out;
+                try {
+                    if (vm.$data && Object.prototype.hasOwnProperty.call(vm.$data, flagName)) out.push(vm);
+                } catch (e) {}
+                for (const c of (vm.$children || [])) findComponentsWithFlag(c, flagName, depth + 1, out);
+                return out;
+            }
             let comp = null;
             for (const root of collectVueRoots()) {
                 comp = findMainForm(root, 0);
@@ -815,6 +1255,7 @@ def trigger_submit_copied_form(page):
     return page.evaluate(
         r"""
         async () => {
+            const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
             const iframe = document.querySelector('iframe');
             if (!iframe) return {ok:false, error:'no iframe'};
             const doc = iframe.contentDocument;
@@ -830,6 +1271,90 @@ def trigger_submit_copied_form(page):
                 }
                 return null;
             }
+
+            function norm(text) {
+                return ((text || '').replace(/\s+/g, ' ').trim());
+            }
+
+            function isVisible(el) {
+                return !!(el && el.offsetParent !== null);
+            }
+
+            function dispatchClick(el) {
+                if (!el) return false;
+                el.scrollIntoView({block: 'center', inline: 'center'});
+                for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click']) {
+                    el.dispatchEvent(new MouseEvent(type, {bubbles:true, cancelable:true, view:window}));
+                }
+                return true;
+            }
+
+            function collectVisibleDialogs() {
+                return Array.from(doc.querySelectorAll('.ivu-modal-wrap,.ivu-drawer-wrap,[role="dialog"],.el-dialog,.el-dialog__wrapper,.v-modal,.el-overlay,.el-message-box__wrapper,div,section,aside'))
+                    .filter(el => isVisible(el))
+                    .map(el => ({
+                        text: norm((el.innerText || el.textContent || '')).slice(0, 800),
+                        cls: (el.className || '').toString(),
+                        tag: el.tagName,
+                    }))
+                    .filter(x => x.text && /提交申请|确认提交|确定取消|确定提交|是否提交|失败|错误|异常|成功/.test(x.text))
+                    .slice(0, 20);
+            }
+
+            function clickConfirmSubmitDialog() {
+                const visible = Array.from(doc.querySelectorAll('button,span,div,a')).filter(isVisible);
+                const confirmBtn = visible.find(el => {
+                    const text = norm(el.textContent);
+                    return text === '提交' || text === '确认提交' || text === '确定';
+                });
+                if (confirmBtn) {
+                    dispatchClick(confirmBtn);
+                    return {ok:true, text:norm(confirmBtn.textContent), cls:(confirmBtn.className || '').toString(), tag:confirmBtn.tagName};
+                }
+                return {ok:false, error:'confirm submit button not found', dialogs:collectVisibleDialogs()};
+            }
+
+            function collectPageSignals() {
+                const text = norm(doc.body && (doc.body.innerText || doc.body.textContent || ''));
+                const dialogs = collectVisibleDialogs();
+                return {
+                    text: text.slice(0, 3000),
+                    dialogs,
+                    hasFailure: /保存飞行活动失败|提交失败|失败|错误|异常/.test(text) || dialogs.some(x => /保存飞行活动失败|提交失败|失败|错误|异常/.test(x.text || '')),
+                    hasSuccess: /提交成功|申请成功|成功/.test(text) || dialogs.some(x => /提交成功|申请成功|成功/.test(x.text || '')),
+                };
+            }
+
+            async function runSingleAttempt(attempt) {
+                const result = {attempt};
+                const submitBtn = Array.from(doc.querySelectorAll('button,span,div,a')).find(el => norm(el.textContent) === '提交申请' && isVisible(el));
+                if (submitBtn) {
+                    dispatchClick(submitBtn);
+                    result.clickedSubmitButton = true;
+                } else {
+                    result.clickedSubmitButton = false;
+                }
+                try {
+                    if (typeof comp.submitPlan === 'function') {
+                        comp.submitPlan();
+                        result.calledSubmitPlan = true;
+                    } else {
+                        result.calledSubmitPlan = false;
+                    }
+                } catch (e) {
+                    result.submitPlanError = e.message;
+                }
+                await sleep(1000);
+                result.submitDialogsAfterPrimarySubmit = collectVisibleDialogs();
+                result.confirmSubmitClick = clickConfirmSubmitDialog();
+                await sleep(1500);
+                result.submitDialogsAfterConfirm = collectVisibleDialogs();
+                result.signals = collectPageSignals();
+                result.failed = !!result.signals.hasFailure;
+                result.succeeded = !!result.signals.hasSuccess && !result.signals.hasFailure;
+                return result;
+            }
+
             const comp = findMainForm(app.__vue__, 0);
             if (!comp) return {ok:false, error:'FLY_INDEX_ADD not found'};
             const payload = {
@@ -838,7 +1363,8 @@ def trigger_submit_copied_form(page):
                     uavs: Array.isArray(comp.$data.form && comp.$data.form.uavs) ? comp.$data.form.uavs.length : null,
                     drivers: Array.isArray(comp.$data.form && comp.$data.form.drivers) ? comp.$data.form.drivers.length : null,
                     spaces: Array.isArray(comp.$data.form && comp.$data.form.spaces) ? comp.$data.form.spaces.length : null,
-                }
+                },
+                attempts: []
             };
             if (comp.$refs && comp.$refs.form && typeof comp.$refs.form.validate === 'function') {
                 payload.validate = await new Promise(resolve => {
@@ -847,22 +1373,28 @@ def trigger_submit_copied_form(page):
                     });
                 });
             }
-            const submitBtn = Array.from(doc.querySelectorAll('button,span,div,a')).find(el => ((el.textContent || '').replace(/\s+/g, ' ').trim()) === '提交申请' && el.offsetParent !== null);
-            if (submitBtn) {
-                submitBtn.click();
-                payload.clickedSubmitButton = true;
-            } else {
-                payload.clickedSubmitButton = false;
+
+            let lastAttempt = null;
+            for (let i = 1; i <= 3; i++) {
+                const attempt = await runSingleAttempt(i);
+                payload.attempts.push(attempt);
+                lastAttempt = attempt;
+                if (!attempt.failed) break;
+                if (i < 3) await sleep(5000);
             }
-            try {
-                if (typeof comp.submitPlan === 'function') {
-                    comp.submitPlan();
-                    payload.calledSubmitPlan = true;
-                } else {
-                    payload.calledSubmitPlan = false;
-                }
-            } catch (e) {
-                payload.submitPlanError = e.message;
+
+            payload.finalAttempt = lastAttempt;
+            payload.retryCount = payload.attempts.length;
+            payload.failed = !!(lastAttempt && lastAttempt.failed);
+            payload.succeeded = !!(lastAttempt && !lastAttempt.failed);
+            payload.after = {
+                uavs: Array.isArray(comp.$data.form && comp.$data.form.uavs) ? comp.$data.form.uavs.length : null,
+                drivers: Array.isArray(comp.$data.form && comp.$data.form.drivers) ? comp.$data.form.drivers.length : null,
+                spaces: Array.isArray(comp.$data.form && comp.$data.form.spaces) ? comp.$data.form.spaces.length : null,
+            };
+            if (payload.failed) {
+                payload.ok = false;
+                payload.error = 'submit failed after 3 attempts, manual intervention required';
             }
             return payload;
         }
@@ -873,7 +1405,8 @@ def trigger_submit_copied_form(page):
 def inspect_add_dialogs(page, detail, plan_beg_new, plan_end_new):
     return page.evaluate(
         r"""
-        ([detail, planBegNew, planEndNew]) => {
+        async ([detail, planBegNew, planEndNew]) => {
+            const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
             const iframe = document.querySelector('iframe');
             if (!iframe) return {ok:false, error:'no iframe'};
             const doc = iframe.contentDocument;
@@ -891,28 +1424,119 @@ def inspect_add_dialogs(page, detail, plan_beg_new, plan_end_new):
                 return null;
             }
 
+            function findComponentsWithFlag(vm, flagName, depth = 0, out = []) {
+                if (!vm || depth > 8 || out.length > 80) return out;
+                try {
+                    if (vm.$data && Object.prototype.hasOwnProperty.call(vm.$data, flagName)) out.push(vm);
+                } catch (e) {}
+                for (const c of (vm.$children || [])) findComponentsWithFlag(c, flagName, depth + 1, out);
+                return out;
+            }
+
+            function norm(s) {
+                return ((s || '').replace(/\s+/g, ' ').trim());
+            }
+
+            function isVisible(el) {
+                return !!(el && el.offsetParent !== null);
+            }
+
+            function dispatchClick(el) {
+                if (!el) return false;
+                el.scrollIntoView({block: 'center', inline: 'center'});
+                for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click']) {
+                    el.dispatchEvent(new MouseEvent(type, {bubbles:true, cancelable:true, view:window}));
+                }
+                return true;
+            }
+
             function dumpVisibleDialogs(root) {
-                return Array.from(root.querySelectorAll('.ivu-modal-wrap,.ivu-drawer-wrap,[role="dialog"]')).filter(el => el.offsetParent !== null).map(el => ({
-                    text: ((el.innerText || '').replace(/\s+/g, ' ').trim()).slice(0, 1000),
+                return Array.from(root.querySelectorAll('.ivu-modal-wrap,.ivu-drawer-wrap,[role="dialog"],.el-dialog,.el-dialog__wrapper')).filter(isVisible).map(el => ({
+                    text: norm((el.innerText || '')).slice(0, 1000),
                     cls: (el.className || '').toString(),
+                    tag: el.tagName,
                 }));
+            }
+
+            function sectionTitleFor(el) {
+                let node = el;
+                for (let i = 0; node && i < 8; i++, node = node.parentElement) {
+                    const text = norm(node.innerText || node.textContent || '');
+                    if (/航空器信息/.test(text)) return 'uav';
+                    if (/操控员信息/.test(text)) return 'driver';
+                    if (/飞行空域信息/.test(text)) return 'space';
+                }
+                return '';
+            }
+
+            function listAddButtons(root) {
+                return Array.from(root.querySelectorAll('button,span,div,a'))
+                    .filter(el => norm(el.textContent) === '添加' && isVisible(el))
+                    .map((el, index) => ({
+                        index,
+                        text: norm(el.textContent),
+                        tag: el.tagName,
+                        cls: (el.className || '').toString(),
+                        section: sectionTitleFor(el),
+                        parentText: norm(el.parentElement && (el.parentElement.innerText || el.parentElement.textContent || '')).slice(0, 160),
+                    }));
+            }
+
+            function findAddButtonBySection(root, section) {
+                const buttonEntries = Array.from(root.querySelectorAll('button,span,div,a'))
+                    .filter(el => norm(el.textContent) === '添加' && isVisible(el))
+                    .map(el => ({el, section: sectionTitleFor(el)}));
+                const buttonTagPreferred = buttonEntries.find(x => x.section === section && x.el.tagName === 'BUTTON' && /\baddButton\b/.test((x.el.className || '').toString()));
+                if (buttonTagPreferred) return buttonTagPreferred.el;
+                const buttonPreferred = buttonEntries.find(x => x.section === section && x.el.tagName === 'BUTTON');
+                if (buttonPreferred) return buttonPreferred.el;
+                const spanPreferred = buttonEntries.find(x => x.section === section && x.el.tagName === 'SPAN');
+                if (spanPreferred) return spanPreferred.el;
+                const exact = buttonEntries.find(x => x.section === section);
+                if (exact) return exact.el;
+                const fallbackButton = buttonEntries.find(x => x.el.tagName === 'BUTTON');
+                if (fallbackButton) return fallbackButton.el;
+                return section === 'uav' ? (buttonEntries[0] && buttonEntries[0].el) || null : (buttonEntries[1] && buttonEntries[1].el) || null;
+            }
+
+            function dumpVueTree(vm, depth = 0, out = []) {
+                if (!vm || depth > 5 || out.length > 120) return out;
+                out.push({
+                    depth,
+                    name: (vm.$options && (vm.$options.name || vm.$options._componentTag)) || '',
+                    refKeys: vm.$refs ? Object.keys(vm.$refs).slice(0, 12) : [],
+                    dataKeys: Object.keys(vm.$data || {}).filter(k => /uav|driver|select|check|space|dialog|table|choose/i.test(k)).slice(0, 20),
+                });
+                for (const c of (vm.$children || [])) dumpVueTree(c, depth + 1, out);
+                return out;
             }
 
             const comp = findMainForm(app.__vue__, 0);
             if (!comp) return {ok:false, error:'FLY_INDEX_ADD not found'};
-            const fill = {
-                planBeg: planBegNew,
-                planEnd: planEndNew,
-                uavSourceCount: Array.isArray(detail.uavs) ? detail.uavs.length : 0,
-                driverSourceCount: Array.isArray(detail.drivers) ? detail.drivers.length : 0,
-            };
-            const addButtons = Array.from(doc.querySelectorAll('button,span,div,a')).filter(el => ((el.textContent || '').replace(/\s+/g, ' ').trim()) === '添加' && el.offsetParent !== null);
-            if (addButtons[0]) addButtons[0].click();
-            if (addButtons[1]) addButtons[1].click();
+            const addButtons = listAddButtons(doc);
+            const uavAdd = findAddButtonBySection(doc, 'uav');
+            if (uavAdd) dispatchClick(uavAdd);
+            await sleep(500);
+            const dialogsAfterUav = dumpVisibleDialogs(doc);
+            const vueAfterUav = dumpVueTree(comp);
+            const driverAdd = findAddButtonBySection(doc, 'driver');
+            if (driverAdd) dispatchClick(driverAdd);
+            await sleep(500);
+            const dialogsAfterDriver = dumpVisibleDialogs(doc);
+            const vueAfterDriver = dumpVueTree(comp);
             return {
                 ok:true,
-                fill,
-                visibleDialogs: dumpVisibleDialogs(doc),
+                fill: {
+                    planBeg: planBegNew,
+                    planEnd: planEndNew,
+                    uavSourceCount: Array.isArray(detail.uavs) ? detail.uavs.length : 0,
+                    driverSourceCount: Array.isArray(detail.drivers) ? detail.drivers.length : 0,
+                },
+                addButtons,
+                dialogsAfterUav,
+                dialogsAfterDriver,
+                vueAfterUav,
+                vueAfterDriver,
                 refKeys: comp.$refs ? Object.keys(comp.$refs) : [],
                 dataKeys: Object.keys(comp.$data || {}).filter(k => /uav|driver|select|check|space|dialog|table|choose/i.test(k)),
             };
@@ -933,7 +1557,7 @@ def js_eval(page, expression, fallback_label, arg=None):
 
 def get_form_debug_snapshot(page, stage):
     return js_eval(page, """
-    ([stage]) => {
+    (stage) => {
       const iframe = document.querySelector('iframe');
       if (!iframe) return {ok:false, stage, error:'no iframe'};
       const doc = iframe.contentDocument;
@@ -991,7 +1615,7 @@ def get_form_debug_snapshot(page, stage):
       payload.fields = [];
       return payload;
     }
-    """, stage, [stage])
+    """, stage, stage)
 
 
 def launch_context(headless=False):
@@ -1001,9 +1625,16 @@ def launch_context(headless=False):
         user_data_dir=str(PERSIST_DIR),
         headless=headless,
         viewport={"width": 1280, "height": 900},
+        ignore_https_errors=True,
         args=["--no-sandbox", "--disable-dev-shm-usage"],
     )
     page = context.pages[0] if context.pages else context.new_page()
+    try:
+        page.on("console", lambda msg: print(f"[browser:{msg.type}] {msg.text}"))
+        page.on("pageerror", lambda exc: print(f"[pageerror] {exc}"))
+        page.on("response", lambda resp: print(f"[http {resp.status}] {resp.url}") if ("flyApply" in resp.url or "/oapi/" in resp.url or "/api/" in resp.url and resp.status >= 400) else None)
+    except Exception:
+        pass
     return p, context, page
 
 
@@ -1032,6 +1663,8 @@ def fetch_latest_detail(page):
     latest = get_latest_plan(page)
     if not latest.get('ok'):
         return None, latest, None
+    if not latest.get('latest'):
+        return latest, {'ok': False, 'error': '最近计划列表为空', 'latest': latest}, None
     detail = get_plan_detail(page, latest['latest']['planId'])
     full_profile = load_full_submit_profile()
     if full_profile:
