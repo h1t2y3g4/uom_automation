@@ -68,6 +68,8 @@ tags: [uom, drone, automation, caac, 无人机, 飞行申请]
 - `uom_semiauto.py`
   - 专门负责：
     - 自动进入新增页并填表
+    - 支持 CLI UTC 对 / config 时间列表 / 最近计划 +1 天保底 三种时间来源
+    - 支持 `--dry-run` 只做时间解析、登录态检查与最近计划检查，不进入新增页、不提交
     - 记录 precheck / postcheck
     - 让用户肉眼确认
     - 再尝试提交并检查最近计划是否变化
@@ -104,6 +106,10 @@ python3 uom_login.py open-browser
 ### 半自动流程
 ```bash
 python3 uom_semiauto.py
+python3 uom_semiauto.py --start-utc-ts 1747908000 --end-utc-ts 1747911600
+python3 uom_semiauto.py --use-time-list
+python3 uom_semiauto.py --dry-run
+python3 uom_semiauto.py --use-time-list --dry-run
 ```
 
 ### 内部选中状态专项调试
@@ -210,17 +216,51 @@ GET /oapi/pub/planInfo/{planId}
 
 ## 时间生成规则
 
-项目里当前明确有两个规则：
-- 通用函数：按目标星期几复用上次同时间
-- 当前主线默认：按当前日期的明天同时间填入（例如 2026-05-19 运行时默认填 2026-05-20）
+`uom_semiauto.py` 当前支持 3+1 种时间入口：
 
-在 `uom_core.py` 里：
-- `get_debug_target_plan_time(...)`
-- `get_next_monday_same_time(...)`
-- `get_next_tuesday_same_time(...)`
+1. CLI 直接传一对 UTC 时间戳
+   - `--start-utc-ts <秒级UTC时间戳>`
+   - `--end-utc-ts <秒级UTC时间戳>`
+   - 读取 `config.json` 中 `time.timezone`，转成本地时间后提交单条计划
 
-当前主线实际默认使用：
-- `get_debug_target_plan_time(...)`
+2. CLI 传 `--use-time-list`
+   - 读取 `config.json` 中 `time.pairs`
+   - 顺序循环提交
+   - 最多 5 条，超过直接报错
+
+3. 无参数保底
+   - 读取最近一条计划详情
+   - 使用 `planBeg/planEnd + 1 day`
+
+4. `--dry-run`
+   - 只做时间解析与打印
+   - 会完成登录态、进入业务页、读取最近计划检查
+   - 不进入新增页，不触发提交
+   - 可与 `--use-time-list` 组合使用
+
+`config.json` 中应配置：
+
+```json
+"time": {
+  "timezone": "UTC+8",
+  "pairs": [
+    {
+      "start_utc_ts": 1747908000,
+      "end_utc_ts": 1747911600
+    }
+  ]
+}
+```
+
+注意：
+- 这里应填写“时区”，不是编码；不要写成 `UTF+8`
+- 当前默认推荐：`UTC+8` 或 `Asia/Shanghai`
+
+在 `uom_core.py` 里相关函数包括：
+- `get_timezone_from_config(...)`
+- `utc_timestamps_to_local_pair(...)`
+- `resolve_time_pairs(...)`
+- `describe_time_pair(...)`
 
 ## 主要入口的区别
 

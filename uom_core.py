@@ -25,8 +25,9 @@ import argparse
 import base64
 import json
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from playwright.sync_api import sync_playwright
 
@@ -38,38 +39,130 @@ BASE_URL = "https://uom.caac.gov.cn"
 MANUAL_SELECTION_LOG = SCRIPT_DIR / "manual_selection_log.json"
 
 
+def parse_local_datetime(value: str):
+    return datetime.strptime(value, '%Y-%m-%d %H:%M:%S')
+
+
+def format_local_datetime(value: datetime):
+    return value.strftime('%Y-%m-%d %H:%M:%S')
+
+
 def get_debug_target_plan_time(plan_beg: str, plan_end: str):
-    b = datetime.strptime(plan_beg, '%Y-%m-%d %H:%M:%S')
-    e = datetime.strptime(plan_end, '%Y-%m-%d %H:%M:%S')
+    b = parse_local_datetime(plan_beg)
+    e = parse_local_datetime(plan_end)
     target_date = datetime.now().date() + timedelta(days=1)
     nb = datetime.combine(target_date, b.time())
     ne = datetime.combine(target_date, e.time())
     if ne <= nb:
         ne = ne + timedelta(days=1)
-    return nb.strftime('%Y-%m-%d %H:%M:%S'), ne.strftime('%Y-%m-%d %H:%M:%S')
+    return format_local_datetime(nb), format_local_datetime(ne)
 
 
 def get_next_monday_same_time(plan_beg: str, plan_end: str):
-    b = datetime.strptime(plan_beg, '%Y-%m-%d %H:%M:%S')
-    e = datetime.strptime(plan_end, '%Y-%m-%d %H:%M:%S')
+    b = parse_local_datetime(plan_beg)
+    e = parse_local_datetime(plan_end)
     days_ahead = (0 - b.weekday()) % 7
     if days_ahead == 0:
         days_ahead = 7
     nb = b + timedelta(days=days_ahead)
     ne = e + timedelta(days=days_ahead)
-    return nb.strftime('%Y-%m-%d %H:%M:%S'), ne.strftime('%Y-%m-%d %H:%M:%S')
+    return format_local_datetime(nb), format_local_datetime(ne)
 
 
 def get_tomorrow_same_time(plan_beg: str, plan_end: str):
-    b = datetime.strptime(plan_beg, '%Y-%m-%d %H:%M:%S')
-    e = datetime.strptime(plan_end, '%Y-%m-%d %H:%M:%S')
+    b = parse_local_datetime(plan_beg)
+    e = parse_local_datetime(plan_end)
     nb = b + timedelta(days=1)
     ne = e + timedelta(days=1)
-    return nb.strftime('%Y-%m-%d %H:%M:%S'), ne.strftime('%Y-%m-%d %H:%M:%S')
+    return format_local_datetime(nb), format_local_datetime(ne)
 
 
 def get_next_tuesday_same_time(plan_beg: str, plan_end: str):
     return get_debug_target_plan_time(plan_beg, plan_end)
+
+
+def get_timezone_from_config(cfg):
+    tz_name = cfg.get('time', {}).get('timezone', 'UTC+8')
+    if tz_name in ('UTC+8', 'UTC+08:00', 'Asia/Shanghai'):
+        return timezone(timedelta(hours=8)), tz_name
+    if tz_name.startswith('UTC'):
+        sign = 1
+        offset = tz_name[3:]
+        if offset.startswith('+'):
+            sign = 1
+            offset = offset[1:]
+        elif offset.startswith('-'):
+            sign = -1
+            offset = offset[1:]
+        parts = offset.split(':') if offset else ['0']
+        hours = int(parts[0] or '0')
+        minutes = int(parts[1] or '0') if len(parts) > 1 else 0
+        return timezone(sign * timedelta(hours=hours, minutes=minutes)), tz_name
+    return ZoneInfo(tz_name), tz_name
+
+
+def utc_timestamps_to_local_pair(start_ts, end_ts, cfg):
+    tzinfo, tz_name = get_timezone_from_config(cfg)
+    start_dt = datetime.fromtimestamp(int(start_ts), timezone.utc).astimezone(tzinfo)
+    end_dt = datetime.fromtimestamp(int(end_ts), timezone.utc).astimezone(tzinfo)
+    if end_dt <= start_dt:
+        raise ValueError(f'结束时间必须晚于开始时间: start={start_ts}, end={end_ts}, timezone={tz_name}')
+    return format_local_datetime(start_dt), format_local_datetime(end_dt)
+
+
+def normalize_time_pair(item, cfg):
+    if not isinstance(item, dict):
+        raise ValueError(f'time item 必须是对象: {item!r}')
+    start_ts = item.get('start_utc_ts', item.get('startUtcTs'))
+    end_ts = item.get('end_utc_ts', item.get('endUtcTs'))
+    if start_ts is None or end_ts is None:
+        raise ValueError(f'time item 缺少 start_utc_ts/end_utc_ts: {item!r}')
+    plan_beg, plan_end = utc_timestamps_to_local_pair(start_ts, end_ts, cfg)
+    return {
+        'planBeg': plan_beg,
+        'planEnd': plan_end,
+        'source': 'config_list',
+        'startUtcTs': int(start_ts),
+        'endUtcTs': int(end_ts),
+    }
+
+
+def resolve_time_pairs(cfg, latest_detail, cli_args):
+    if cli_args.start_utc_ts is not None or cli_args.end_utc_ts is not None:
+        if cli_args.start_utc_ts is None or cli_args.end_utc_ts is None:
+            raise ValueError('必须同时传 --start-utc-ts 和 --end-utc-ts')
+        plan_beg, plan_end = utc_timestamps_to_local_pair(cli_args.start_utc_ts, cli_args.end_utc_ts, cfg)
+        return [{
+            'planBeg': plan_beg,
+            'planEnd': plan_end,
+            'source': 'cli_utc_pair',
+            'startUtcTs': int(cli_args.start_utc_ts),
+            'endUtcTs': int(cli_args.end_utc_ts),
+        }]
+
+    if cli_args.use_time_list:
+        items = cfg.get('time', {}).get('pairs', [])
+        if not items:
+            raise ValueError('config.json 中 time.pairs 为空，无法按列表提交')
+        pairs = [normalize_time_pair(item, cfg) for item in items]
+        if len(pairs) > 5:
+            raise ValueError(f'time.pairs 最多允许 5 条，本次配置了 {len(pairs)} 条')
+        return pairs
+
+    plan_beg, plan_end = get_tomorrow_same_time(latest_detail['planBeg'], latest_detail['planEnd'])
+    return [{
+        'planBeg': plan_beg,
+        'planEnd': plan_end,
+        'source': 'latest_plus_one_day',
+    }]
+
+
+def describe_time_pair(pair, index=None):
+    prefix = f'[{index}] ' if index is not None else ''
+    extra = ''
+    if pair.get('source') in ('cli_utc_pair', 'config_list'):
+        extra = f" | UTC: {pair.get('startUtcTs')} -> {pair.get('endUtcTs')}"
+    return f"{prefix}{pair['planBeg']} ~ {pair['planEnd']} ({pair.get('source')}){extra}"
 
 
 def sanitize_for_json(value):
@@ -667,39 +760,144 @@ def get_plan_detail(page, plan_id):
 
 def wait_for_fly_add(page, timeout_s=30):
     deadline = time.time() + timeout_s
+    stable_ready_count = 0
+    last_ready = None
+    last_snapshot = None
     while time.time() < deadline:
         try:
             res = page.evaluate(
-                """
+                r"""
                 () => {
                     const iframe = document.querySelector('iframe');
-                    if (!iframe) return null;
-                    const href = iframe.contentWindow.location.href;
+                    if (!iframe) return {ok:false, error:'no iframe'};
+                    const href = iframe.contentWindow ? iframe.contentWindow.location.href : '';
                     const doc = iframe.contentDocument;
-                    const bodyText = (doc.body && doc.body.innerText || '').slice(0, 1000);
+                    if (!doc) return {ok:false, error:'no iframe doc', href};
+                    const bodyText = ((doc.body && doc.body.innerText) || '').replace(/\s+/g, ' ').trim();
                     const app = doc.querySelector('#app');
                     const vueNames = [];
-                    if (app && app.__vue__) {
-                        function walk(vm, depth) {
-                            if (!vm || depth > 8) return;
-                            const name = (vm.$options && (vm.$options.name || vm.$options._componentTag)) || '';
-                            if (name) vueNames.push(name);
-                            for (const c of (vm.$children || [])) walk(c, depth + 1);
+                    let mainComp = null;
+
+                    function walk(vm, depth) {
+                        if (!vm || depth > 15) return;
+                        const name = (vm.$options && (vm.$options.name || vm.$options._componentTag)) || '';
+                        if (name) vueNames.push(name);
+                        if (!mainComp && name === 'FLY_INDEX_ADD' && vm.$data && vm.$data.form) {
+                            mainComp = vm;
                         }
-                        walk(app.__vue__, 0);
+                        for (const c of (vm.$children || [])) walk(c, depth + 1);
                     }
+
+                    if (app && app.__vue__) walk(app.__vue__, 0);
                     const uniqNames = Array.from(new Set(vueNames));
-                    const ready = uniqNames.includes('FLY_INDEX_ADD') || bodyText.includes('无人驾驶航空器飞行活动申请');
-                    return {href, hasVue: uniqNames.length > 0, vueNames: uniqNames.slice(0, 20), pageText: bodyText, ready};
+
+                    const visibleAddButtons = Array.from(doc.querySelectorAll('button.addButton, button'))
+                        .filter(el => el && el.offsetParent !== null)
+                        .filter(el => ((el.textContent || '').replace(/\s+/g, ' ').trim()) === '添加');
+
+                    const datetimeInputs = Array.from(doc.querySelectorAll('input')).filter(el => {
+                        if (!el || el.offsetParent === null) return false;
+                        const ph = (el.getAttribute('placeholder') || '').trim();
+                        const cls = (el.className || '').toString();
+                        return /日期|时间|选择日期|选择时间/.test(ph) || /date|time/i.test(cls);
+                    });
+
+                    const loadingVisible = Array.from(doc.querySelectorAll('div,span,section,aside')).some(el => {
+                        if (!el || el.offsetParent === null) return false;
+                        const cls = (el.className || '').toString();
+                        const text = ((el.textContent || '').replace(/\s+/g, ' ').trim());
+                        return /loading|spinner|is-loading|el-loading|ivu-spin|ant-spin/i.test(cls) || /加载中|提交中|处理中/.test(text);
+                    });
+
+                    const noticeVisible = Array.from(doc.querySelectorAll('div,section,aside,span'))
+                        .filter(el => el && el.offsetParent !== null)
+                        .some(el => /温馨提示/.test((el.textContent || '').replace(/\s+/g, ' ').trim()));
+
+                    const form = mainComp && mainComp.$data ? mainComp.$data.form || {} : {};
+                    const refKeys = mainComp && mainComp.$refs ? Object.keys(mainComp.$refs) : [];
+                    const dataKeys = mainComp && mainComp.$data ? Object.keys(mainComp.$data) : [];
+                    const hasKeyData = dataKeys.includes('showNoticeDialog') && dataKeys.includes('form');
+                    const hasKeyRefs = refKeys.includes('form') && refKeys.includes('spaceSelection') && refKeys.includes('leafletMap');
+                    const formShapeReady = (
+                        form && typeof form === 'object' &&
+                        Object.prototype.hasOwnProperty.call(form, 'planBeg') &&
+                        Object.prototype.hasOwnProperty.call(form, 'planEnd') &&
+                        Array.isArray(form.uavs) &&
+                        Array.isArray(form.drivers) &&
+                        Array.isArray(form.spaces)
+                    );
+
+                    const stabilityFingerprint = JSON.stringify({
+                        href,
+                        visibleAddButtonCount: visibleAddButtons.length,
+                        datetimeInputCount: datetimeInputs.length,
+                        loadingVisible,
+                        noticeVisible,
+                        hasKeyRefs,
+                        hasKeyData,
+                        formShapeReady,
+                        vueNames: uniqNames.slice().sort(),
+                        refKeys: refKeys.slice().sort(),
+                        dataKeys: dataKeys.filter(k => /form|dialog|notice|uav|driver|space|loading/i.test(k)).slice().sort(),
+                        bodyTextHead: bodyText.slice(0, 300),
+                    });
+
+                    const ready = (
+                        href.includes('flyIndexAdd') &&
+                        !!mainComp &&
+                        visibleAddButtons.length >= 2 &&
+                        datetimeInputs.length >= 2 &&
+                        hasKeyRefs &&
+                        hasKeyData &&
+                        formShapeReady &&
+                        !loadingVisible &&
+                        /无人驾驶航空器飞行活动申请/.test(bodyText)
+                    );
+
+                    return {
+                        ok: true,
+                        ready,
+                        loadingVisible,
+                        noticeVisible,
+                        stableFingerprint: stabilityFingerprint,
+                        href,
+                        hasVue: uniqNames.length > 0,
+                        vueNames: uniqNames.slice(0, 20),
+                        hasMainComp: !!mainComp,
+                        refKeys: refKeys.slice(0, 20),
+                        interestingDataKeys: dataKeys.filter(k => /form|dialog|notice|uav|driver|space|loading/i.test(k)).slice(0, 30),
+                        visibleAddButtonCount: visibleAddButtons.length,
+                        datetimeInputCount: datetimeInputs.length,
+                        bodyText: bodyText.slice(0, 1000),
+                        formSummary: {
+                            planBegType: form && form.planBeg != null ? typeof form.planBeg : null,
+                            planEndType: form && form.planEnd != null ? typeof form.planEnd : null,
+                            hasUavsField: Array.isArray(form && form.uavs),
+                            hasDriversField: Array.isArray(form && form.drivers),
+                            hasSpacesField: Array.isArray(form && form.spaces),
+                        },
+                    };
                 }
                 """
             )
-            if res and 'flyIndexAdd' in res['href'] and res.get('ready'):
-                return res
-        except Exception:
-            pass
+            last_snapshot = res
+            if res and res.get('ready'):
+                stable_key = res.get('stableFingerprint')
+                if stable_key == last_ready:
+                    stable_ready_count += 1
+                else:
+                    last_ready = stable_key
+                    stable_ready_count = 1
+                if stable_ready_count >= 3:
+                    res['stableReadyCount'] = stable_ready_count
+                    return res
+            else:
+                stable_ready_count = 0
+                last_ready = None
+        except Exception as e:
+            last_snapshot = {'ok': False, 'error': str(e)}
         time.sleep(1)
-    return None
+    return last_snapshot
 
 
 def open_new_fly_form(page):

@@ -39,6 +39,10 @@ python3 uom_login.py open-browser
 
 ```bash
 python3 uom_semiauto.py
+python3 uom_semiauto.py --start-utc-ts 1747908000 --end-utc-ts 1747911600
+python3 uom_semiauto.py --use-time-list
+python3 uom_semiauto.py --dry-run
+python3 uom_semiauto.py --use-time-list --dry-run
 ```
 
 专项调试：
@@ -77,6 +81,8 @@ python3 uom_selection_debug.py
 专门负责：
 - 自动进入新增页
 - 填入最近计划内容
+- 支持三种时间入口（CLI UTC 对 / config 列表 / 最近计划 +1 天保底）
+- 支持 `--dry-run` 只解析时间与预演
 - 输出 precheck / postcheck
 - 让你人工确认
 - 再尝试触发提交
@@ -99,11 +105,10 @@ python3 uom_selection_debug.py
 - 查询最近历史计划与详情
 - 打开 `flyIndexAdd` 新增页
 - 自动填入上次计划的大部分内容
+- `uom_semiauto.py` 已支持 AI 友好的时间传递：CLI UTC 对、config 批量列表、无参数保底、以及 `--dry-run` 预演
 
 当前主要阻塞点：
-- 新增页前端校验仍可能卡在 `uavs` / `drivers`
-- 页面虽然显示航空器和操控员行，但前端内部未必认定为“已选中”
-- 因此当前还不能把“点到提交按钮”视为真正提交成功
+- UOM 站点本身仍可能偶发返回异常或前端状态污染，批量模式仍需继续观察稳定性
 
 ## 当前建议阅读顺序
 
