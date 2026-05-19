@@ -7,21 +7,14 @@ uom_core.py - UOM 持久化浏览器核心能力与统一 CLI 入口
 - 主站登录态 / 飞行活动 iframe oapi 认证检查
 - 进入 一般飞行活动
 - 读取最近计划 / 详情
-- 打开新增页 / 半自动填充 / 探测 / 提交
-- 提供统一命令入口，避免多个脚本各自复制前半段流程
+- 打开新增页 / 自动填充 / 提交
+- 提供公共底层能力，供上层脚本复用
 
-用法：
-  python3 uom_core.py status
-  python3 uom_core.py login
-  python3 uom_core.py ensure-fly
-  python3 uom_core.py latest-plan
-  python3 uom_core.py probe
-  python3 uom_core.py semiauto
-  python3 uom_core.py open-browser
-  python3 uom_core.py submit-copy-next-tuesday
+说明：
+- 这个文件主要承载底层函数，不是推荐的人类主入口
+- 常用入口优先使用：uom_login.py / uom_submit_fly_plan.py
 """
 
-import argparse
 import base64
 import json
 import time

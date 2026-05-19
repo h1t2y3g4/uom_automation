@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-uom_semiauto.py - UOM 半自动提交流程
+uom_submit_fly_plan.py - UOM 自动提交飞行计划流程
 
 职责：
 - 复用持久化浏览器登录态
@@ -8,14 +8,14 @@ uom_semiauto.py - UOM 半自动提交流程
 - 自动填入最近计划内容和目标时间
 - 记录 precheck/postcheck 调试信息
 - 支持 dry-run 只做时间解析与预演，不触发提交
-- 你确认后再尝试触发提交
+- 自动触发提交并检查结果
 
 用法：
-  python3 uom_semiauto.py
-  python3 uom_semiauto.py --start-utc-ts 1747908000 --end-utc-ts 1747911600
-  python3 uom_semiauto.py --use-time-list
-  python3 uom_semiauto.py --dry-run
-  python3 uom_semiauto.py --use-time-list --dry-run
+  python3 uom_submit_fly_plan.py
+  python3 uom_submit_fly_plan.py --start-utc-ts 1747908000 --end-utc-ts 1747911600
+  python3 uom_submit_fly_plan.py --use-time-list
+  python3 uom_submit_fly_plan.py --dry-run
+  python3 uom_submit_fly_plan.py --use-time-list --dry-run
 """
 
 import argparse
@@ -26,7 +26,7 @@ import uom_core as core
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(description='UOM 半自动提交脚本')
+    parser = argparse.ArgumentParser(description='UOM 自动提交飞行计划脚本')
     parser.add_argument('--start-utc-ts', type=int, help='开始 UTC 秒级时间戳')
     parser.add_argument('--end-utc-ts', type=int, help='结束 UTC 秒级时间戳')
     parser.add_argument('--use-time-list', action='store_true', help='按 config.json 中的 time.pairs 循环提交')
@@ -139,8 +139,8 @@ def run_single_submission(page, detail, time_pair, drone_name, drone_uas_code, d
 
 def main():
     args = build_parser().parse_args()
-    print('UOM 半自动提交脚本')
-    print('流程：先关闭温馨提示，再按更接近人工的顺序逐项填入 -> 观察 10 秒 -> 自动提交并检查结果')
+    print('UOM 自动提交飞行计划脚本')
+    print('流程：先关闭温馨提示，再按更接近人工的顺序逐项填入 -> 观察 5 秒 -> 自动提交并检查结果')
     cfg = core.load_config()
     drone_name = cfg.get("drone", {}).get("proName", "config.json 中的 drone.proName")
     drone_uas_code = cfg.get("drone", {}).get("uasCode", "config.json 中的 drone.uasCode")
@@ -150,7 +150,7 @@ def main():
         status = core.ensure_main_page(page)
         print('主站状态:')
         print(json.dumps(status, ensure_ascii=False, indent=2))
-        core.require_reliable_main_login(status, context, '当前不在可靠的主站已登录状态，停止半自动流程，避免在错误页面上继续执行。')
+        core.require_reliable_main_login(status, context, '当前不在可靠的主站已登录状态，停止自动提交流程，避免在错误页面上继续执行。')
         print('进入 一般飞行活动 ...')
         core.open_fly_activity(page)
         core.time.sleep(6)

@@ -4,24 +4,22 @@
 
 ## 当前结构
 
-这个项目现在按职责拆成 4 个明确入口：
+这个项目现在按职责保留 3 个主要入口：
 
 - `uom_core.py`
-  - 只放底层能力
-  - 包括持久化 Playwright profile、登录态判断、进入一般飞行活动、oapi 认证、读取最近计划、打开新增页、填表、探测、提交等公共函数
+  - 只放底层公共能力
+  - 包括持久化 Playwright profile、登录态判断、进入一般飞行活动、oapi 认证、读取最近计划、打开新增页、填表、提交等公共函数
 - `uom_login.py`
   - 专门处理登录/状态类操作
   - 包括：`status / login / ensure-fly / latest-plan / open-browser`
-- `uom_semiauto.py`
-  - 只放半自动提交流程
-- `uom_selection_debug.py`
-  - 只放“航空器/操控员内部选中状态”专项调试流程
+- `uom_submit_fly_plan.py`
+  - 自动提交飞行计划入口
 
 这样做的目的：
 - 不再让 `uom_core.py` 同时充当 CLI 大杂烩
-- 登录/状态、半自动提交流程、专项调试各自独立
+- 登录/状态与自动提交流程分离
 - 公共底层能力只维护一份，避免重复逻辑漂移
-- 不再保留一个和半自动流程高度重叠的旧 probe 脚本
+- 临时调试脚本不作为长期架构的一部分记录
 
 ## 推荐用法
 
@@ -35,20 +33,14 @@ python3 uom_login.py latest-plan
 python3 uom_login.py open-browser
 ```
 
-半自动流程：
+自动提交流程：
 
 ```bash
-python3 uom_semiauto.py
-python3 uom_semiauto.py --start-utc-ts 1747908000 --end-utc-ts 1747911600
-python3 uom_semiauto.py --use-time-list
-python3 uom_semiauto.py --dry-run
-python3 uom_semiauto.py --use-time-list --dry-run
-```
-
-专项调试：
-
-```bash
-python3 uom_selection_debug.py
+python3 uom_submit_fly_plan.py
+python3 uom_submit_fly_plan.py --start-utc-ts 1747908000 --end-utc-ts 1747911600
+python3 uom_submit_fly_plan.py --use-time-list
+python3 uom_submit_fly_plan.py --dry-run
+python3 uom_submit_fly_plan.py --use-time-list --dry-run
 ```
 
 ## 各文件职责
@@ -77,38 +69,14 @@ python3 uom_selection_debug.py
 - 查看最近计划
 - 打开持久化浏览器给人工检查
 
-### 3. `uom_semiauto.py`
+### 3. `uom_submit_fly_plan.py`
 专门负责：
 - 自动进入新增页
 - 填入最近计划内容
 - 支持三种时间入口（CLI UTC 对 / config 列表 / 最近计划 +1 天保底）
 - 支持 `--dry-run` 只解析时间与预演
-- 输出 precheck / postcheck
-- 让你人工确认
-- 再尝试触发提交
-
-### 4. `uom_selection_debug.py`
-专门负责：
-- 自动进入新增页
-- 自动填表
-- 不走最终提交流程
-- 聚焦航空器/操控员内部选中状态
-- 输出 data/ref/dialog/validate 相关线索
-
-## 当前状态
-
-主线已经打通：
-- 复用持久化 Playwright profile
-- 检查主站登录态
-- 进入 `运行管理 -> 飞行活动申请 -> 一般飞行活动`
-- 从 iframe 提取 `PUB-Token / ticket / userName`
-- 查询最近历史计划与详情
-- 打开 `flyIndexAdd` 新增页
-- 自动填入上次计划的大部分内容
-- `uom_semiauto.py` 已支持 AI 友好的时间传递：CLI UTC 对、config 批量列表、无参数保底、以及 `--dry-run` 预演
-
-当前主要阻塞点：
-- UOM 站点本身仍可能偶发返回异常或前端状态污染，批量模式仍需继续观察稳定性
+- 自动提交流程
+- 提交后等待 20 秒再检查最近计划与写日志
 
 ## 当前建议阅读顺序
 
@@ -118,26 +86,31 @@ python3 uom_selection_debug.py
    - 当前底层能力实现
 3. `uom_login.py`
    - 登录/状态入口
-4. `uom_semiauto.py`
-   - 半自动提交流程
-5. `uom_selection_debug.py`
-   - 内部选中状态专项调试流程
-6. `SKILL.md`
+4. `uom_submit_fly_plan.py`
+   - 自动提交飞行计划入口
+5. `SKILL.md`
+   - 给 AI 的项目操作索引
 
 ## 当前现役文件
 
 - `uom_core.py`
 - `uom_login.py`
-- `uom_semiauto.py`
-- `uom_selection_debug.py`
+- `uom_submit_fly_plan.py`
 - `HANDOFF_UOM_PROJECT.md`
 - `SKILL.md`
 - `config.json`
 - `config_temp.json`
 - `.playwright-uom-profile/`（持久化浏览器目录，不要随意删除）
 
+## 临时调试脚本约定
+
+- `uom_selection_debug.py` 已删除
+- 这类文件只作为临时调试用途
+- 若后续需要专项调试，可按当时问题临时创建
+- 调试结束后应删除，不作为长期项目结构记录
+
 ## 备注
 
 - 详细说明统一看 `HANDOFF_UOM_PROJECT.md`
-- `SKILL.md` 是项目内最新操作说明文档，涉及脚本职责、默认命令、时间规则、阻塞点时优先看它
-- 如果后续继续开发，优先围绕 `uom_core.py` 补底层能力；围绕 `uom_semiauto.py` / `uom_selection_debug.py` 调整具体流程
+- `SKILL.md` 只保留脚本入口、命令和配置修改方式，不再承载大段背景细节
+- 如果后续继续开发，优先围绕 `uom_core.py` 补底层能力；围绕 `uom_submit_fly_plan.py` 调整自动提交流程
