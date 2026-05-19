@@ -4,7 +4,7 @@
 
 ## 当前结构
 
-这个项目现在按职责保留 3 个主要入口：
+这个项目现在按职责保留 4 个主要入口：
 
 - `uom_core.py`
   - 只放底层公共能力
@@ -14,6 +14,8 @@
   - 包括：`status / login / ensure-fly / latest-plan / open-browser`
 - `uom_submit_fly_plan.py`
   - 自动提交飞行计划入口
+- `uom_read_plan.py`
+  - 读取最近飞行计划详情并保存到文件
 
 这样做的目的：
 - 不再让 `uom_core.py` 同时充当 CLI 大杂烩
@@ -31,6 +33,14 @@ python3 uom_login.py login
 python3 uom_login.py ensure-fly
 python3 uom_login.py latest-plan
 python3 uom_login.py open-browser
+```
+
+读取飞行计划详情：
+
+```bash
+python3 uom_read_plan.py
+python3 uom_read_plan.py --output /path/to/output.json
+python3 uom_read_plan.py --headless
 ```
 
 自动提交流程：
@@ -78,6 +88,12 @@ python3 uom_submit_fly_plan.py --use-time-list --dry-run
 - 自动提交流程
 - 提交后等待 20 秒再检查最近计划与写日志
 
+### 4. `uom_read_plan.py`
+专门负责：
+- 读取最近飞行计划详情（默认 10 条）
+- 保存为 JSON 文件（默认 `uom_recent_plan_details.json`）
+- 包含计划列表和详细信息（空域经纬度、无人机、操控员等）
+
 ## 当前建议阅读顺序
 
 1. `HANDOFF_UOM_PROJECT.md`
@@ -96,6 +112,7 @@ python3 uom_submit_fly_plan.py --use-time-list --dry-run
 - `uom_core.py`
 - `uom_login.py`
 - `uom_submit_fly_plan.py`
+- `uom_read_plan.py`
 - `HANDOFF_UOM_PROJECT.md`
 - `SKILL.md`
 - `config.json`

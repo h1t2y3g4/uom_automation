@@ -1,6 +1,6 @@
 ---
 name: uom-automation
-description: UOM 自动化项目操作索引：按接口调用登录/状态脚本、自动提交脚本，并在需要时修改 config.json。
+description: UOM 自动化项目操作索引：按接口调用登录/状态脚本、读取计划脚本、自动提交脚本，并在需要时修改 config.json。
 tags: [uom, drone, automation, caac, 无人机, 飞行申请]
 ---
 
@@ -27,6 +27,7 @@ tags: [uom, drone, automation, caac, 无人机, 飞行申请]
    - `~/hermes_interface/uom-automation/uom_core.py`
    - `~/hermes_interface/uom-automation/uom_login.py`
    - `~/hermes_interface/uom-automation/uom_submit_fly_plan.py`
+   - `~/hermes_interface/uom-automation/uom_read_plan.py`
 
 ## 当前入口脚本
 
@@ -69,10 +70,25 @@ python3 uom_submit_fly_plan.py --use-time-list --dry-run
 ```
 
 说明：
-- 这个脚本已不是“半自动”定位，当前文档统一按“自动提交”理解
+- 这个脚本已不是"半自动"定位，当前文档统一按"自动提交"理解
 - 运行日志默认看：`manual_selection_log.json`
 
-### 3. 底层公共能力
+### 3. 读取飞行计划详情入口
+文件：`uom_read_plan.py`
+
+用途：
+- 读取最近飞行计划详情（默认 10 条）
+- 保存为 JSON 文件（默认 `uom_recent_plan_details.json`）
+- 包含计划列表和详细信息（空域经纬度、无人机、操控员等）
+
+常用命令：
+```bash
+python3 uom_read_plan.py
+python3 uom_read_plan.py --output /path/to/output.json
+python3 uom_read_plan.py --headless
+```
+
+### 4. 底层公共能力
 文件：`uom_core.py`
 
 用途：
