@@ -38,7 +38,7 @@ def main(argv=None):
         print('进入 一般飞行活动 ...')
         core.open_fly_activity(page)
         core.time.sleep(6)
-        result, err = core.fetch_recent_plan_details(page, limit=5)
+        result, err = core.fetch_recent_plan_details(page, limit=10)
         if err:
             print('读取最近计划详情失败:')
             print(json.dumps(err, ensure_ascii=False, indent=2))
