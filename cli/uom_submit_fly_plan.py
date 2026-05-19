@@ -20,9 +20,14 @@ uom_submit_fly_plan.py - UOM 自动提交飞行计划流程
 
 import argparse
 import json
+import sys
 import traceback
+from pathlib import Path
 
-import uom_core as core
+# 添加项目根目录到 Python 路径
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+import core.uom_core as core
 
 
 def build_parser():

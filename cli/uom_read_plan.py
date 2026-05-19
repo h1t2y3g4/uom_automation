@@ -16,8 +16,13 @@ uom_read_plan.py - 读取最近 5 条飞行计划详情并保存到文件
 
 import argparse
 import json
+import sys
+from pathlib import Path
 
-import uom_core as core
+# 添加项目根目录到 Python 路径
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+import core.uom_core as core
 
 
 def build_parser():

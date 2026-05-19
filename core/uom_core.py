@@ -25,12 +25,13 @@ from zoneinfo import ZoneInfo
 from playwright.sync_api import sync_playwright
 
 SCRIPT_DIR = Path(__file__).parent
-CONFIG_FILE = SCRIPT_DIR / "config.json"
-PERSIST_DIR = SCRIPT_DIR / ".playwright-uom-profile"
+PROJECT_ROOT = SCRIPT_DIR.parent
+CONFIG_FILE = PROJECT_ROOT / "config" / "config.json"
+PERSIST_DIR = PROJECT_ROOT / ".playwright-uom-profile"
 CAPTCHA_FILE = Path("/tmp/uom_persistent_captcha.png")
 BASE_URL = "https://uom.caac.gov.cn"
-MANUAL_SELECTION_LOG = SCRIPT_DIR / "manual_selection_log.json"
-DEFAULT_RECENT_PLAN_DETAILS_FILE = SCRIPT_DIR / "uom_recent_plan_details.json"
+MANUAL_SELECTION_LOG = PROJECT_ROOT / "log" / "manual_selection_log.json"
+DEFAULT_RECENT_PLAN_DETAILS_FILE = PROJECT_ROOT / "log" / "uom_recent_plan_details.json"
 
 
 def parse_local_datetime(value: str):
