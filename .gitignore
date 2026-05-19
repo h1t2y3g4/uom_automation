@@ -4,3 +4,4 @@ __pycache__/
 browser_state.json
 manual_selection_log.json
 config.json
+uom_recent_plan_details.json

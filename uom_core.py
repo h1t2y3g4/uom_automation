@@ -30,6 +30,7 @@ PERSIST_DIR = SCRIPT_DIR / ".playwright-uom-profile"
 CAPTCHA_FILE = Path("/tmp/uom_persistent_captcha.png")
 BASE_URL = "https://uom.caac.gov.cn"
 MANUAL_SELECTION_LOG = SCRIPT_DIR / "manual_selection_log.json"
+DEFAULT_RECENT_PLAN_DETAILS_FILE = SCRIPT_DIR / "uom_recent_plan_details.json"
 
 
 def parse_local_datetime(value: str):
@@ -554,10 +555,10 @@ def open_fly_activity(page):
             const tree = (layout.$data && layout.$data.menuTree) || [];
             let item = null;
             for (const x of tree) {
-                if (x && x.value === 'a2e16537-2fa4-4ca6-a935-1baf0efb111e') item = x;
+                if (x && x.id === 'a2e16537-2fa4-4ca6-a935-1baf0efb111e') item = x;
                 if (!item && x && Array.isArray(x.children)) {
                     for (const c of x.children) {
-                        if (c && c.value === 'a2e16537-2fa4-4ca6-a935-1baf0efb111e') item = c;
+                        if (c && c.id === 'a2e16537-2fa4-4ca6-a935-1baf0efb111e') item = c;
                     }
                 }
             }
@@ -688,9 +689,13 @@ def check_oapi_auth(page):
 
 
 def get_latest_plan(page):
+    return get_recent_plans(page, page_num=1, page_size=5)
+
+
+def get_recent_plans(page, page_num=1, page_size=5):
     return page.evaluate(
         """
-        async () => {
+        async ([pageNum, pageSize]) => {
             const iframe = document.querySelector('iframe');
             if (!iframe) return {ok:false, error:'no iframe'};
             const doc = iframe.contentDocument;
@@ -702,7 +707,7 @@ def get_latest_plan(page):
             const m = cookie.match(/(?:^|; )PUB-Token=([^;]+)/);
             const pubToken = m ? decodeURIComponent(m[1]) : null;
             if (!(ticket && userName && pubToken)) return {ok:false, error:'missing auth'};
-            const resp = await iframe.contentWindow.fetch('/oapi/pub/planInfo/list?pageNum=1&pageSize=5&planTypes=11,12,13', {
+            const resp = await iframe.contentWindow.fetch(`/oapi/pub/planInfo/list?pageNum=${pageNum}&pageSize=${pageSize}&planTypes=11,12,13`, {
                 headers: {
                     'Authorization': 'Bearer ' + pubToken,
                     'pubUserName': userName,
@@ -713,9 +718,10 @@ def get_latest_plan(page):
             });
             const data = await resp.json();
             const rows = (data && data.data && data.data.rows) || data.rows || (data && data.data && data.data.list) || data.list || [];
-            return {ok: true, total: rows.length, latest: rows[0] || null, data};
+            return {ok: true, total: rows.length, latest: rows[0] || null, rows, data, pageNum, pageSize};
         }
-        """
+        """,
+        [page_num, page_size]
     )
 
 
@@ -1862,3 +1868,49 @@ def fetch_latest_detail(page):
         detail['uavs'] = full_profile['uavs']
         detail['drivers'] = full_profile['drivers']
     return latest, None, detail
+
+
+def fetch_recent_plan_details(page, limit=5):
+    plans = get_recent_plans(page, page_num=1, page_size=limit)
+    if not plans.get('ok'):
+        return None, plans
+    rows = plans.get('rows') or []
+    details = []
+    for row in rows[:limit]:
+        plan_id = row.get('planId')
+        if not plan_id:
+            details.append({
+                'summary': row,
+                'detail_error': {'ok': False, 'error': 'missing planId'},
+            })
+            continue
+        try:
+            detail = get_plan_detail(page, plan_id)
+            details.append({
+                'summary': row,
+                'detail': detail,
+            })
+        except Exception as e:
+            details.append({
+                'summary': row,
+                'detail_error': {
+                    'ok': False,
+                    'error': str(e),
+                    'type': type(e).__name__,
+                },
+            })
+    return {
+        'ok': True,
+        'count': len(details),
+        'list': plans,
+        'details': details,
+    }, None
+
+
+def save_recent_plan_details(payload, output_path=DEFAULT_RECENT_PLAN_DETAILS_FILE):
+    output_path = Path(output_path)
+    output_path.write_text(
+        json.dumps(sanitize_for_json(payload), ensure_ascii=False, indent=2),
+        encoding='utf-8',
+    )
+    return output_path
