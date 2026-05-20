@@ -48,13 +48,15 @@ def main(argv=None):
             print('读取最近计划详情失败:')
             print(json.dumps(err, ensure_ascii=False, indent=2))
             raise SystemExit(1)
-        saved_path = core.save_recent_plan_details(result, args.output)
+        filtered_result = core.filter_future_plan_details(result)
+        saved_path = core.save_recent_plan_details(filtered_result, args.output)
         print('读取完成，结果摘要:')
         print(json.dumps({
             'ok': True,
-            'count': result.get('count'),
+            'count': filtered_result.get('count'),
             'output': str(saved_path),
-            'planIds': [item.get('summary', {}).get('planId') for item in result.get('details', [])],
+            'planIds': [item.get('summary', {}).get('planId') for item in filtered_result.get('details', [])],
+            'filter': filtered_result.get('filter'),
         }, ensure_ascii=False, indent=2))
     finally:
         core.close_context(playwright_handle, context)

@@ -41,6 +41,72 @@ def parse_local_datetime(value: str):
     return datetime.strptime(value, '%Y-%m-%d %H:%M:%S')
 
 
+def get_now_local():
+    return datetime.now()
+
+
+def is_future_plan(plan_beg: str, now=None):
+    if not plan_beg:
+        return False
+    now = now or get_now_local()
+    try:
+        return parse_local_datetime(plan_beg) >= now
+    except Exception:
+        return False
+
+
+def filter_future_plan_details(payload, now=None):
+    if not isinstance(payload, dict):
+        return payload
+    now = now or get_now_local()
+    details = payload.get('details') or []
+    kept_details = []
+    kept_plan_ids = set()
+    for item in details:
+        if not isinstance(item, dict):
+            continue
+        summary = item.get('summary') if isinstance(item.get('summary'), dict) else {}
+        detail = item.get('detail') if isinstance(item.get('detail'), dict) else {}
+        plan_beg = detail.get('planBeg') or detail.get('planBegStr') or summary.get('planBeg') or summary.get('planBegStr')
+        if not is_future_plan(plan_beg, now=now):
+            continue
+        kept_details.append(item)
+        plan_id = detail.get('planId') or summary.get('planId')
+        if plan_id is not None:
+            kept_plan_ids.add(plan_id)
+
+    list_payload = payload.get('list') if isinstance(payload.get('list'), dict) else {}
+    rows = list_payload.get('rows') or []
+    kept_rows = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        row_plan_beg = row.get('planBeg') or row.get('planBegStr')
+        row_plan_id = row.get('planId')
+        if row_plan_id in kept_plan_ids or is_future_plan(row_plan_beg, now=now):
+            kept_rows.append(row)
+
+    latest = kept_rows[0] if kept_rows else None
+    filtered = {
+        **payload,
+        'count': len(kept_details),
+        'details': kept_details,
+        'filteredAt': format_local_datetime(now),
+        'filter': {
+            'type': 'future_plan_only',
+            'keptCount': len(kept_details),
+            'droppedCount': max(0, len(details) - len(kept_details)),
+        },
+        'list': {
+            **list_payload,
+            'total': len(kept_rows),
+            'latest': latest,
+            'rows': kept_rows,
+        },
+    }
+    return filtered
+
+
 def format_local_datetime(value: datetime):
     return value.strftime('%Y-%m-%d %H:%M:%S')
 
@@ -2117,6 +2183,7 @@ def fetch_recent_plan_details(page, limit=5):
 
 def save_recent_plan_details(payload, output_path=DEFAULT_RECENT_PLAN_DETAILS_FILE):
     output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         json.dumps(sanitize_for_json(payload), ensure_ascii=False, indent=2),
         encoding='utf-8',
