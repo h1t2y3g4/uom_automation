@@ -12,7 +12,8 @@
 │   └── uom_submit_fly_plan.py  # 自动提交飞行计划
 ├── config/                 # 配置文件
 │   ├── config.json         # 主配置文件
-│   └── config_temp.json    # 临时配置
+│   ├── airspace.json       # 本地常用空域缓存
+│   └── submit_plan.json    # 待提交计划列表
 ├── core/                   # 核心模块
 │   └── uom_core.py         # 底层公共能力
 ├── doc/                    # 文档
@@ -50,10 +51,18 @@ python3 cli/uom_read_plan.py --headless
 ```bash
 python3 cli/uom_submit_fly_plan.py
 python3 cli/uom_submit_fly_plan.py --start-utc-ts 1747908000 --end-utc-ts 1747911600
+python3 cli/uom_submit_fly_plan.py --use-submit-plan
 python3 cli/uom_submit_fly_plan.py --use-time-list
 python3 cli/uom_submit_fly_plan.py --dry-run
-python3 cli/uom_submit_fly_plan.py --use-time-list --dry-run
+python3 cli/uom_submit_fly_plan.py --use-submit-plan --dry-run
 ```
+
+## 当前主路径约定
+
+- AI 触发批量提交时，默认应优先修改 `config/submit_plan.json`，再执行 `python3 cli/uom_submit_fly_plan.py --use-submit-plan`
+- `--use-time-list` 仅作兼容别名，实际仍读取 `submit_plan.json`，不建议新流程继续依赖它
+- CLI 直接传 `--start-utc-ts / --end-utc-ts` 时，空域默认使用 `airspace.json` 第一项作为保底
+- 空域统一走经纬度注入；`common_ref` 仅表示从 `airspace.json` 按名称换算经纬度，不再走“常用空域 UI 点选”
 
 ## 各目录职责
 
@@ -77,14 +86,15 @@ python3 cli/uom_submit_fly_plan.py --use-time-list --dry-run
   - 表单快照 / 探测 / 提交等辅助函数
 
 ### `config/` - 配置文件
-- `config.json`: 主配置文件（无人机、操控员、联系方式、时间配置）
-- `config_temp.json`: 临时配置
+- `config.json`: 主配置文件（认证、联系人、无人机、操控员、默认参数）
+- `airspace.json`: 本地常用空域缓存，按名称提供经纬度
+- `submit_plan.json`: 待提交计划列表，AI 批量提交默认优先改这个文件
 
 ### `doc/` - 文档
 - `HANDOFF_UOM_PROJECT.md`: 项目完整交接文档
 
 ### `log/` - 日志和输出文件
-- `manual_selection_log.json`: 提交日志
+- `manual_selection_log.json`: 最近一轮运行的整轮聚合日志（覆盖上一轮，但保留本轮全部计划项）
 - `uom_recent_plan_details.json`: 读取的计划详情
 
 ## 当前建议阅读顺序

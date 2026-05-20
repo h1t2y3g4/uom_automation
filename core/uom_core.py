@@ -27,6 +27,8 @@ from playwright.sync_api import sync_playwright
 SCRIPT_DIR = Path(__file__).parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 CONFIG_FILE = PROJECT_ROOT / "config" / "config.json"
+AIRSPACE_FILE = PROJECT_ROOT / "config" / "airspace.json"
+SUBMIT_PLAN_FILE = PROJECT_ROOT / "config" / "submit_plan.json"
 PERSIST_DIR = PROJECT_ROOT / ".playwright-uom-profile"
 CAPTCHA_FILE = Path("/tmp/uom_persistent_captcha.png")
 BASE_URL = "https://uom.caac.gov.cn"
@@ -77,7 +79,11 @@ def get_next_tuesday_same_time(plan_beg: str, plan_end: str):
 
 
 def get_timezone_from_config(cfg):
-    tz_name = cfg.get('time', {}).get('timezone', 'UTC+8')
+    tz_name = (
+        cfg.get('plan_defaults', {}).get('timezone')
+        or cfg.get('time', {}).get('timezone')
+        or 'UTC+8'
+    )
     if tz_name in ('UTC+8', 'UTC+08:00', 'Asia/Shanghai'):
         return timezone(timedelta(hours=8)), tz_name
     if tz_name.startswith('UTC'):
@@ -94,6 +100,42 @@ def get_timezone_from_config(cfg):
         minutes = int(parts[1] or '0') if len(parts) > 1 else 0
         return timezone(sign * timedelta(hours=hours, minutes=minutes)), tz_name
     return ZoneInfo(tz_name), tz_name
+
+
+def normalize_space_payload(space, default_top=None):
+    if not isinstance(space, dict):
+        raise ValueError(f'space 必须是对象: {space!r}')
+    polygon = space.get('polygonWgs84') or space.get('locationWgs84') or space.get('points')
+    if not polygon:
+        raise ValueError(f'space 缺少 polygonWgs84/locationWgs84/points: {space!r}')
+    spc_bottom = space.get('spcBottom', 0)
+    spc_top = space.get('spcTop', default_top if default_top is not None else 120)
+    return {
+        **space,
+        'locationWgs84': polygon,
+        'polygonWgs84': polygon,
+        'spcBottom': spc_bottom,
+        'spcTop': spc_top,
+        'spcName': space.get('spcName') or space.get('name') or '',
+        'groupName': space.get('groupName') or '空域1',
+        'spaceShape': space.get('spaceShape') or '面',
+        'spcShape': space.get('spcShape') or '1',
+    }
+
+
+def find_cached_airspace_by_name(airspace_cache, name):
+    items = airspace_cache.get('items', []) if isinstance(airspace_cache, dict) else []
+    for item in items:
+        if item.get('name') == name:
+            return item
+    raise ValueError(f'airspace.json 中找不到常用空域: {name}')
+
+
+def get_first_cached_airspace(airspace_cache):
+    items = airspace_cache.get('items', []) if isinstance(airspace_cache, dict) else []
+    if not items:
+        raise ValueError('airspace.json 的 items 为空，无法作为保底空域来源')
+    return items[0]
 
 
 def utc_timestamps_to_local_pair(start_ts, end_ts, cfg):
@@ -122,42 +164,103 @@ def normalize_time_pair(item, cfg):
     }
 
 
-def resolve_time_pairs(cfg, latest_detail, cli_args):
+def normalize_submission_plan_item(item, cfg, airspace_cache):
+    if not isinstance(item, dict):
+        raise ValueError(f'submit plan item 必须是对象: {item!r}')
+    plan_beg = item.get('planBeg')
+    plan_end = item.get('planEnd')
+    if not plan_beg or not plan_end:
+        raise ValueError(f'submit plan item 缺少 planBeg/planEnd: {item!r}')
+    airspace = item.get('airspace')
+    if not isinstance(airspace, dict):
+        raise ValueError(f'submit plan item 缺少 airspace 对象: {item!r}')
+    airspace_type = airspace.get('type')
+    default_top = cfg.get('plan_defaults', {}).get('spcTop')
+    if airspace_type == 'common_ref':
+        ref_name = airspace.get('name')
+        if not ref_name:
+            raise ValueError(f'common_ref 缺少 name: {item!r}')
+        cached = find_cached_airspace_by_name(airspace_cache, ref_name)
+        space = normalize_space_payload(cached, default_top=default_top)
+        return {
+            'planBeg': plan_beg,
+            'planEnd': plan_end,
+            'source': 'submit_plan_file',
+            'airspaceSource': 'airspace_cache',
+            'airspaceRefName': ref_name,
+            'space': space,
+        }
+    if airspace_type == 'polygon':
+        inline_space = airspace.get('space')
+        space = normalize_space_payload(inline_space, default_top=default_top)
+        return {
+            'planBeg': plan_beg,
+            'planEnd': plan_end,
+            'source': 'submit_plan_file',
+            'airspaceSource': 'submit_plan_inline',
+            'airspaceRefName': None,
+            'space': space,
+        }
+    raise ValueError(f'不支持的 airspace.type: {airspace_type!r}')
+
+
+def resolve_submission_items(cfg, latest_detail, cli_args):
+    airspace_cache = load_airspace_cache()
+    default_top = cfg.get('plan_defaults', {}).get('spcTop')
     if cli_args.start_utc_ts is not None or cli_args.end_utc_ts is not None:
         if cli_args.start_utc_ts is None or cli_args.end_utc_ts is None:
             raise ValueError('必须同时传 --start-utc-ts 和 --end-utc-ts')
         plan_beg, plan_end = utc_timestamps_to_local_pair(cli_args.start_utc_ts, cli_args.end_utc_ts, cfg)
+        first_airspace = get_first_cached_airspace(airspace_cache)
         return [{
             'planBeg': plan_beg,
             'planEnd': plan_end,
             'source': 'cli_utc_pair',
             'startUtcTs': int(cli_args.start_utc_ts),
             'endUtcTs': int(cli_args.end_utc_ts),
+            'airspaceSource': 'fallback_first_cached_airspace',
+            'airspaceRefName': first_airspace.get('name'),
+            'space': normalize_space_payload(first_airspace, default_top=default_top),
         }]
 
-    if cli_args.use_time_list:
-        items = cfg.get('time', {}).get('pairs', [])
+    if getattr(cli_args, 'use_submit_plan', False) or getattr(cli_args, 'use_time_list', False):
+        data = load_submit_plan()
+        items = data.get('plans', [])
         if not items:
-            raise ValueError('config.json 中 time.pairs 为空，无法按列表提交')
-        pairs = [normalize_time_pair(item, cfg) for item in items]
-        if len(pairs) > 5:
-            raise ValueError(f'time.pairs 最多允许 5 条，本次配置了 {len(pairs)} 条')
-        return pairs
+            raise ValueError('submit_plan.json 中 plans 为空，无法按列表提交')
+        if len(items) > 5:
+            raise ValueError(f'submit_plan.json 的 plans 最多允许 5 条，本次配置了 {len(items)} 条')
+        return [normalize_submission_plan_item(item, cfg, airspace_cache) for item in items]
 
     plan_beg, plan_end = get_tomorrow_same_time(latest_detail['planBeg'], latest_detail['planEnd'])
+    first_airspace = get_first_cached_airspace(airspace_cache)
     return [{
         'planBeg': plan_beg,
         'planEnd': plan_end,
         'source': 'latest_plus_one_day',
+        'airspaceSource': 'fallback_first_cached_airspace',
+        'airspaceRefName': first_airspace.get('name'),
+        'space': normalize_space_payload(first_airspace, default_top=default_top),
     }]
 
 
-def describe_time_pair(pair, index=None):
+def describe_submission_item(item, index=None):
     prefix = f'[{index}] ' if index is not None else ''
     extra = ''
-    if pair.get('source') in ('cli_utc_pair', 'config_list'):
-        extra = f" | UTC: {pair.get('startUtcTs')} -> {pair.get('endUtcTs')}"
-    return f"{prefix}{pair['planBeg']} ~ {pair['planEnd']} ({pair.get('source')}){extra}"
+    if item.get('source') == 'cli_utc_pair':
+        extra = f" | UTC: {item.get('startUtcTs')} -> {item.get('endUtcTs')}"
+    return (
+        f"{prefix}{item['planBeg']} ~ {item['planEnd']} ({item.get('source')})"
+        f" | airspace={item.get('airspaceSource')} | ref={item.get('airspaceRefName') or '-'}{extra}"
+    )
+
+
+def resolve_time_pairs(cfg, latest_detail, cli_args):
+    return resolve_submission_items(cfg, latest_detail, cli_args)
+
+
+def describe_time_pair(pair, index=None):
+    return describe_submission_item(pair, index=index)
 
 
 def sanitize_for_json(value):
@@ -172,9 +275,23 @@ def sanitize_for_json(value):
     return value
 
 
-def load_config():
-    with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+def load_json_file(path: Path, missing_hint: str):
+    if not path.exists():
+        raise FileNotFoundError(missing_hint)
+    with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def load_config():
+    return load_json_file(CONFIG_FILE, f"config.json 不存在，请先创建 {CONFIG_FILE}")
+
+
+def load_airspace_cache():
+    return load_json_file(AIRSPACE_FILE, f"airspace.json 不存在，请先创建 {AIRSPACE_FILE}")
+
+
+def load_submit_plan():
+    return load_json_file(SUBMIT_PLAN_FILE, f"submit_plan.json 不存在，请先创建 {SUBMIT_PLAN_FILE}")
 
 
 def load_full_submit_profile():
@@ -931,10 +1048,10 @@ def open_new_fly_form(page):
     )
 
 
-def fill_new_form_from_detail(page, detail, plan_beg_new, plan_end_new):
+def fill_new_form_from_detail(page, detail, plan_beg_new, plan_end_new, space_payload):
     return page.evaluate(
         r"""
-        async ([detail, planBegNew, planEndNew]) => {
+        async ([detail, planBegNew, planEndNew, spacePayload]) => {
             const STEP_SLEEP_MS = 2000;
             const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
             const iframe = document.querySelector('iframe');
@@ -1229,7 +1346,7 @@ def fill_new_form_from_detail(page, detail, plan_beg_new, plan_end_new):
                 dataKeys: Object.keys(vm.$data || {}).slice(0, 20),
             }));
             const beforeKeys = Object.keys(comp.$data || {}).filter(k => /uav|driver|select|check|space|dialog|table|choose/i.test(k));
-            const sourceSpace = (detail.spaces && detail.spaces[0]) || {};
+            const sourceSpace = spacePayload || {};
             const sourceUav = Array.isArray(detail.uavs) && detail.uavs.length ? clone(detail.uavs[0]) : null;
             const sourceDriver = Array.isArray(detail.drivers) && detail.drivers.length ? clone(detail.drivers[0]) : null;
 
@@ -1390,7 +1507,7 @@ def fill_new_form_from_detail(page, detail, plan_beg_new, plan_end_new):
             };
         }
         """,
-        [detail, plan_beg_new, plan_end_new],
+        [detail, plan_beg_new, plan_end_new, space_payload],
     )
 
 
@@ -1740,7 +1857,7 @@ def inspect_add_dialogs(page, detail, plan_beg_new, plan_end_new):
             };
         }
         """,
-        [detail, plan_beg_new, plan_end_new],
+        [detail, plan_beg_new, plan_end_new, space_payload],
     )
 
 

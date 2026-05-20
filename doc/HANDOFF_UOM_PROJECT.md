@@ -50,17 +50,18 @@
 4. 从 iframe 提取 oapi 所需认证
 5. 查询最近计划列表和详情
 6. 打开 `flyIndexAdd` 新增页
-7. 自动把上一次计划的核心内容灌入新增页
-8. 自动关闭温馨提示
-9. 自动选择航空器
-10. 自动选择操控员
-11. 自动触发提交和二次确认
-12. 提交后等待并重新读取最近计划做验证
+7. 自动把上一次计划的航空器/操控员等核心内容灌入新增页
+8. 空域统一按本地经纬度配置注入（不再依赖常用空域点选）
+9. 自动关闭温馨提示
+10. 自动选择航空器
+11. 自动选择操控员
+12. 自动触发提交和二次确认
+13. 提交后等待并重新读取最近计划做验证
 
 仍需持续关注：
 1. UOM 服务端偶发 500 / 异常响应
 2. 页面异步渲染导致的时序不稳定
-3. 批量时间列表模式下的稳定性
+3. 批量提交列表模式下的稳定性
 4. 如果站点改版，新增页控件结构可能再次变化
 
 --------------------------------------------------
@@ -78,6 +79,33 @@
 6. 自动填入上次计划内容 + 目标新时间
 7. 走真实前端提交流程
 8. 提交后再回读最近计划验证结果
+
+--------------------------------------------------
+## 3.1 配置文件拆分（2026-05-20）
+--------------------------------------------------
+
+当前提交流程已拆分为三类配置文件：
+
+1. `config/config.json`
+   - 主配置，仅存稳定身份与默认参数
+   - 包含认证、联系人、无人机、操控员、`plan_defaults.timezone` 等
+
+2. `config/airspace.json`
+   - 本地常用空域缓存
+   - 只负责按名称提供经纬度空域数据
+   - `items[0]` 也是 CLI 直接传时间时的保底空域来源
+
+3. `config/submit_plan.json`
+   - 待提交计划列表
+   - 每项都包含 `planBeg` / `planEnd` 和 `airspace`
+   - `airspace.type=common_ref` 表示从 `airspace.json` 按名称取经纬度
+   - `airspace.type=polygon` 表示直接使用该条内联经纬度
+
+当前统一策略：
+- 不实现常用空域 UI 点选
+- 所有空域最终都解析成经纬度对象，再注入新增页
+- AI 触发批量提交时，默认应优先改写 `submit_plan.json`，并使用 `--use-submit-plan` 执行
+- 默认无参和 CLI 仅传时间时，都使用 `airspace.json` 第一个空域作为保底
 
 为什么不走纯 API 主线：
 1. 直接 `POST /oapi/pub/planInfo` 曾返回 500
@@ -230,9 +258,10 @@ python3 uom_login.py open-browser
 ```bash
 python3 uom_submit_fly_plan.py
 python3 uom_submit_fly_plan.py --start-utc-ts 1747908000 --end-utc-ts 1747911600
+python3 uom_submit_fly_plan.py --use-submit-plan
 python3 uom_submit_fly_plan.py --use-time-list
 python3 uom_submit_fly_plan.py --dry-run
-python3 uom_submit_fly_plan.py --use-time-list --dry-run
+python3 uom_submit_fly_plan.py --use-submit-plan --dry-run
 ```
 
 说明：
@@ -242,23 +271,32 @@ python3 uom_submit_fly_plan.py --use-time-list --dry-run
 
 ### 5.4 配置文件
 
-#### `config.json`
+#### `config/config.json`
 保存内容包括：
 - 无人机信息
 - 操控员信息
 - 联系方式
-- 部分提交所需字段
-- 时间配置
+- 默认参数（例如 `plan_defaults.timezone`）
 
-时间配置示例：
+#### `config/airspace.json`
+保存本地常用空域缓存，按名称提供经纬度。
+
+#### `config/submit_plan.json`
+保存待提交计划列表；AI 若要批量提交，默认优先修改这个文件。
+
+推荐结构示例：
 
 ```json
-"time": {
+{
   "timezone": "UTC+8",
-  "pairs": [
+  "plans": [
     {
-      "start_utc_ts": 1747908000,
-      "end_utc_ts": 1747911600
+      "planBeg": "2026-05-22 10:00:00",
+      "planEnd": "2026-05-22 11:00:00",
+      "airspace": {
+        "type": "common_ref",
+        "name": "三江公园"
+      }
     }
   ]
 }
@@ -274,7 +312,8 @@ python3 uom_submit_fly_plan.py --use-time-list --dry-run
 ### 5.6 其他重要文件
 
 - `manual_selection_log.json`
-  - 自动提交脚本最近一次运行日志
+  - 自动提交脚本最近一轮运行的整轮聚合日志
+  - 会覆盖上一轮，但保留本轮全部计划项的执行结果
 - `README.md`
   - 项目入口说明，偏快速导航
 - `SKILL.md`
@@ -348,7 +387,13 @@ python3 uom_submit_fly_plan.py --dry-run
 python3 uom_submit_fly_plan.py --start-utc-ts 1747908000 --end-utc-ts 1747911600
 ```
 
-### 6.9 使用 config 里的时间列表批量执行
+### 6.9 使用 `submit_plan.json` 批量执行（推荐主路径）
+
+```bash
+python3 uom_submit_fly_plan.py --use-submit-plan
+```
+
+兼容旧参数：
 
 ```bash
 python3 uom_submit_fly_plan.py --use-time-list
@@ -363,22 +408,28 @@ python3 uom_submit_fly_plan.py --use-time-list
 1. CLI 直接传一对 UTC 时间戳
    - `--start-utc-ts <秒级UTC时间戳>`
    - `--end-utc-ts <秒级UTC时间戳>`
-   - 读取 `config.json` 中 `time.timezone`，转成本地时间后提交单条计划
+   - 读取 `plan_defaults.timezone`（兼容旧配置时也可兜底读旧字段），转成本地时间后提交单条计划
+   - 空域默认使用 `airspace.json` 第一项作为保底
 
-2. CLI 传 `--use-time-list`
-   - 读取 `config.json` 中 `time.pairs`
+2. CLI 传 `--use-submit-plan`（推荐主路径）
+   - 读取 `config/submit_plan.json` 中 `plans`
    - 顺序循环提交
    - 最多 5 条，超过直接报错
 
-3. 无参数保底
+3. CLI 传 `--use-time-list`
+   - 仅作兼容别名
+   - 实际仍读取 `config/submit_plan.json`
+   - 不建议 AI 新流程继续依赖它
+
+4. 无参数保底
    - 读取最近一条计划详情
    - 使用 `planBeg/planEnd + 1 day`
+   - 空域使用 `airspace.json` 第一项保底
 
-4. `--dry-run`
-   - 只做时间解析与打印
+5. `--dry-run`
    - 会完成登录态、进入业务页、读取最近计划检查
    - 不进入新增页，不触发提交
-   - 可与 `--use-time-list` 组合使用
+   - 可与 `--use-submit-plan` 组合使用
 
 注意：
 - `timezone` 填写的是时区，不是编码；不要误写成 `UTF+8`

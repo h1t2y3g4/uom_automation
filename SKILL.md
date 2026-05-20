@@ -1,6 +1,6 @@
 ---
 name: uom-automation
-description: UOM 自动化项目操作索引：按接口调用登录/状态脚本、读取计划脚本、自动提交脚本，并在需要时修改 config.json。
+description: UOM 自动化项目操作索引：按接口调用登录/状态脚本、读取计划脚本、自动提交脚本，并在需要时修改主配置/空域缓存/提交列表。
 tags: [uom, drone, automation, caac, 无人机, 飞行申请]
 ---
 
@@ -13,6 +13,7 @@ tags: [uom, drone, automation, caac, 无人机, 飞行申请]
 - 该调用哪个脚本入口
 - 常用命令怎么跑
 - 配置改哪里
+- 提交列表和空域缓存放哪里
 - 哪些细节不要写回 skill，而应去看交接文档
 
 详细背景、历史坑点、技术结论、调试经验，统一看：
@@ -64,14 +65,17 @@ python3 cli/uom_login.py open-browser
 ```bash
 python3 cli/uom_submit_fly_plan.py
 python3 cli/uom_submit_fly_plan.py --start-utc-ts 1747908000 --end-utc-ts 1747911600
+python3 cli/uom_submit_fly_plan.py --use-submit-plan
 python3 cli/uom_submit_fly_plan.py --use-time-list
 python3 cli/uom_submit_fly_plan.py --dry-run
-python3 cli/uom_submit_fly_plan.py --use-time-list --dry-run
+python3 cli/uom_submit_fly_plan.py --use-submit-plan --dry-run
 ```
 
 说明：
 - 这个脚本已不是"半自动"定位，当前文档统一按"自动提交"理解
-- 运行日志默认看：`log/manual_selection_log.json`
+- AI 触发提交时，默认应优先走 `submit_plan.json` + `--use-submit-plan` 这条主路径
+- `--use-time-list` 仅保留兼容，不应作为 AI 首选入口
+- 运行日志默认看：`log/manual_selection_log.json`，该文件始终保存最近一轮运行的整轮聚合结果（会覆盖上一轮，但保留本轮全部计划项）
 
 ### 3. 读取飞行计划详情入口
 文件：`cli/uom_read_plan.py`
@@ -99,28 +103,37 @@ python3 cli/uom_read_plan.py --headless
 
 主要配置文件：`config/config.json`
 
-AI 在需要改配置时，优先修改这里：
-- 无人机信息
-- 操控员信息
-- 联系方式
-- 时间配置
+配置拆分后职责如下：
+- `config/config.json`：主配置（认证、联系人、无人机、操控员、默认参数）
+- `config/airspace.json`：本地常用空域缓存；提交前按名称换算成经纬度
+- `config/submit_plan.json`：待提交批次列表；每项同时包含时间和空域描述
 
-时间相关配置示例：
+AI 在需要改配置时，优先按职责修改：
+- 身份与默认参数改 `config/config.json`
+- 常用空域缓存改 `config/airspace.json`
+- 待提交计划改 `config/submit_plan.json`
+
+`submit_plan.json` 示例：
 ```json
-"time": {
+{
   "timezone": "UTC+8",
-  "pairs": [
+  "plans": [
     {
-      "start_utc_ts": 1747908000,
-      "end_utc_ts": 1747911600
+      "planBeg": "2026-05-22 10:00:00",
+      "planEnd": "2026-05-22 11:00:00",
+      "airspace": {
+        "type": "common_ref",
+        "name": "三江公园"
+      }
     }
   ]
 }
 ```
 
 时间入口约定：
-- 直接传 CLI UTC 时间戳：`--start-utc-ts` / `--end-utc-ts`
-- 批量使用配置时间列表：`--use-time-list`
+- AI / 批量提交默认入口：`--use-submit-plan`
+- 直接传 CLI UTC 时间戳：`--start-utc-ts` / `--end-utc-ts`（保底使用 `airspace.json` 第一项空域）
+- `--use-time-list` 仅作兼容别名，实际仍读取 `submit_plan.json`，不建议新流程继续依赖它
 - 只做预演不提交：`--dry-run`
 
 ## 文档分工约定

@@ -13,9 +13,10 @@ uom_submit_fly_plan.py - UOM 自动提交飞行计划流程
 用法：
   python3 uom_submit_fly_plan.py
   python3 uom_submit_fly_plan.py --start-utc-ts 1747908000 --end-utc-ts 1747911600
+  python3 uom_submit_fly_plan.py --use-submit-plan
   python3 uom_submit_fly_plan.py --use-time-list
   python3 uom_submit_fly_plan.py --dry-run
-  python3 uom_submit_fly_plan.py --use-time-list --dry-run
+  python3 uom_submit_fly_plan.py --use-submit-plan --dry-run
 """
 
 import argparse
@@ -34,7 +35,8 @@ def build_parser():
     parser = argparse.ArgumentParser(description='UOM 自动提交飞行计划脚本')
     parser.add_argument('--start-utc-ts', type=int, help='开始 UTC 秒级时间戳')
     parser.add_argument('--end-utc-ts', type=int, help='结束 UTC 秒级时间戳')
-    parser.add_argument('--use-time-list', action='store_true', help='按 config.json 中的 time.pairs 循环提交')
+    parser.add_argument('--use-submit-plan', action='store_true', help='按 submit_plan.json 中的 plans 循环提交')
+    parser.add_argument('--use-time-list', action='store_true', help='兼容旧参数；实际改为读取 submit_plan.json')
     parser.add_argument('--dry-run', action='store_true', help='只解析时间并打印计划，不进入新增页、不提交')
     return parser
 
@@ -46,11 +48,67 @@ def write_submit_log(payload):
     )
 
 
-def run_single_submission(page, detail, time_pair, drone_name, drone_uas_code, driver_name, pair_index, pair_total):
-    next_beg = time_pair['planBeg']
-    next_end = time_pair['planEnd']
+def build_run_log(submission_items):
+    return {
+        'runStartedAt': core.format_local_datetime(core.datetime.now()),
+        'runFinishedAt': None,
+        'status': 'running',
+        'total': len(submission_items),
+        'successCount': 0,
+        'failureCount': 0,
+        'items': [
+            {
+                'pairIndex': idx,
+                'pairTotal': len(submission_items),
+                'submission_item': item,
+                'status': 'pending',
+                'error': None,
+                'fill': None,
+                'precheck': None,
+                'postcheck': None,
+                'submit': None,
+                'latest_after_submit': None,
+            }
+            for idx, item in enumerate(submission_items, start=1)
+        ],
+    }
+
+
+def update_run_log(run_log, pair_index, **fields):
+    item = run_log['items'][pair_index - 1]
+    item.update(fields)
+    statuses = [x.get('status') for x in run_log.get('items', [])]
+    run_log['successCount'] = sum(1 for s in statuses if s == 'post_submit_checked')
+    run_log['failureCount'] = sum(1 for s in statuses if s in ('submit_exception', 'failed'))
+    if all(s == 'post_submit_checked' for s in statuses):
+        run_log['status'] = 'completed'
+    elif any(s in ('submit_exception', 'failed') for s in statuses):
+        run_log['status'] = 'partial_failure'
+    else:
+        run_log['status'] = 'running'
+    return run_log
+
+
+def finalize_run_log(run_log):
+    run_log['runFinishedAt'] = core.format_local_datetime(core.datetime.now())
+    statuses = [x.get('status') for x in run_log.get('items', [])]
+    if statuses and all(s == 'post_submit_checked' for s in statuses):
+        run_log['status'] = 'completed'
+    elif any(s in ('submit_exception', 'failed') for s in statuses):
+        run_log['status'] = 'partial_failure'
+    else:
+        run_log['status'] = 'incomplete'
+    run_log['successCount'] = sum(1 for s in statuses if s == 'post_submit_checked')
+    run_log['failureCount'] = sum(1 for s in statuses if s in ('submit_exception', 'failed'))
+    return run_log
+
+
+def run_single_submission(page, detail, submission_item, drone_name, drone_uas_code, driver_name, pair_index, pair_total, run_log):
+    next_beg = submission_item['planBeg']
+    next_end = submission_item['planEnd']
+    resolved_space = submission_item['space']
     print(f'\n===== 第 {pair_index}/{pair_total} 条计划 =====')
-    print(f'目标时间: {core.describe_time_pair(time_pair)}')
+    print(f'目标计划: {core.describe_submission_item(submission_item)}')
     add_res = core.open_new_fly_form(page)
     print('打开新增页:')
     print(json.dumps(add_res, ensure_ascii=False, indent=2))
@@ -59,7 +117,7 @@ def run_single_submission(page, detail, time_pair, drone_name, drone_uas_code, d
     print(json.dumps(fly_add, ensure_ascii=False, indent=2)[:4000])
     if not fly_add:
         raise SystemExit(1)
-    fill = core.fill_new_form_from_detail(page, detail, next_beg, next_end)
+    fill = core.fill_new_form_from_detail(page, detail, next_beg, next_end, resolved_space)
     print('填充结果:')
     print(json.dumps(core.sanitize_for_json(fill), ensure_ascii=False, indent=2)[:4000])
     precheck = core.get_form_debug_snapshot(page, f'precheck_auto_fill_{pair_index}')
@@ -90,55 +148,53 @@ def run_single_submission(page, detail, time_pair, drone_name, drone_uas_code, d
     postcheck = core.get_form_debug_snapshot(page, f'postcheck_manual_before_submit_{pair_index}')
     print('手动确认后的前端校验/快照:')
     print(json.dumps(postcheck, ensure_ascii=False, indent=2)[:5000])
-    submit_log = {
-        'pairIndex': pair_index,
-        'pairTotal': pair_total,
-        'target_time': time_pair,
-        'fill': fill,
-        'precheck': precheck,
-        'postcheck': postcheck,
-        'submit': None,
-        'latest_after_submit': None,
-        'status': 'pre_submit_logged',
-        'error': None,
-    }
-    write_submit_log(submit_log)
+    update_run_log(
+        run_log,
+        pair_index,
+        target_time={'planBeg': submission_item['planBeg'], 'planEnd': submission_item['planEnd']},
+        fill=fill,
+        precheck=precheck,
+        postcheck=postcheck,
+        submit=None,
+        latest_after_submit=None,
+        status='pre_submit_logged',
+        error=None,
+    )
+    write_submit_log(run_log)
     print(f'日志已保存: {core.MANUAL_SELECTION_LOG}')
     try:
         submit_res = core.trigger_submit_copied_form(page)
-        submit_log['submit'] = submit_res
-        submit_log['status'] = 'submit_triggered'
-        write_submit_log(submit_log)
+        update_run_log(run_log, pair_index, submit=submit_res, status='submit_triggered')
+        write_submit_log(run_log)
         print('触发提交:')
         print(json.dumps(submit_res, ensure_ascii=False, indent=2))
         print('提交后等待 20 秒，便于观察页面反馈...')
         core.time.sleep(20)
         latest2 = core.get_latest_plan(page)
-        submit_log['latest_after_submit'] = latest2
-        submit_log['status'] = 'post_submit_checked'
-        write_submit_log(submit_log)
+        update_run_log(run_log, pair_index, latest_after_submit=latest2, status='post_submit_checked')
+        write_submit_log(run_log)
         print('提交后最近计划:')
         print(json.dumps(latest2, ensure_ascii=False, indent=2)[:4000])
     except Exception as e:
-        submit_log['status'] = 'submit_exception'
-        submit_log['error'] = {
+        error_payload = {
             'type': type(e).__name__,
             'message': str(e),
             'traceback': traceback.format_exc(),
         }
-        write_submit_log(submit_log)
+        update_run_log(run_log, pair_index, status='submit_exception', error=error_payload)
+        write_submit_log(run_log)
         print('提交后流程出现异常，已写入日志:')
-        print(json.dumps(submit_log['error'], ensure_ascii=False, indent=2))
+        print(json.dumps(error_payload, ensure_ascii=False, indent=2))
         raise
     return {
-        'time_pair': time_pair,
+        'submission_item': submission_item,
         'fill': fill,
         'precheck': precheck,
         'postcheck': postcheck,
-        'submit': submit_log['submit'],
-        'latest_after_submit': submit_log['latest_after_submit'],
-        'status': submit_log['status'],
-        'error': submit_log['error'],
+        'submit': run_log['items'][pair_index - 1]['submit'],
+        'latest_after_submit': run_log['items'][pair_index - 1]['latest_after_submit'],
+        'status': run_log['items'][pair_index - 1]['status'],
+        'error': run_log['items'][pair_index - 1]['error'],
     }
 
 
@@ -165,16 +221,45 @@ def main():
             print(json.dumps(latest_err, ensure_ascii=False, indent=2))
             context.close()
             raise SystemExit(1)
-        time_pairs = core.resolve_time_pairs(cfg, detail, args)
-        print('本轮计划时间列表:')
-        for idx, pair in enumerate(time_pairs, start=1):
-            print(core.describe_time_pair(pair, idx))
+        if args.use_time_list and not args.use_submit_plan:
+            print('[compat] --use-time-list 已废弃，当前按 submit_plan.json 处理。')
+        submission_items = core.resolve_submission_items(cfg, detail, args)
+        run_log = build_run_log(submission_items)
+        write_submit_log(run_log)
+        print('本轮计划列表:')
+        for idx, item in enumerate(submission_items, start=1):
+            print(core.describe_submission_item(item, idx))
         if args.dry_run:
-            print('dry-run 模式：已完成时间解析与登录态/最近计划检查，不进入新增页、不触发提交。')
+            preview = []
+            for item in submission_items:
+                space = item.get('space') or {}
+                preview.append({
+                    'planBeg': item.get('planBeg'),
+                    'planEnd': item.get('planEnd'),
+                    'source': item.get('source'),
+                    'airspaceSource': item.get('airspaceSource'),
+                    'airspaceRefName': item.get('airspaceRefName'),
+                    'spacePreview': {
+                        'polygonWgs84': space.get('polygonWgs84'),
+                        'spcBottom': space.get('spcBottom'),
+                        'spcTop': space.get('spcTop'),
+                        'groupName': space.get('groupName'),
+                        'spcName': space.get('spcName'),
+                    },
+                })
+            print('dry-run 解析结果:')
+            print(json.dumps(core.sanitize_for_json(preview), ensure_ascii=False, indent=2)[:8000])
+            run_log['preview'] = preview
+            run_log['status'] = 'dry_run'
+            run_log['runFinishedAt'] = core.format_local_datetime(core.datetime.now())
+            write_submit_log(run_log)
+            print('dry-run 模式：已完成登录态/最近计划检查，以及时间与空域解析；不进入新增页、不触发提交。')
             return
         results = []
-        for idx, pair in enumerate(time_pairs, start=1):
-            results.append(run_single_submission(page, detail, pair, drone_name, drone_uas_code, driver_name, idx, len(time_pairs)))
+        for idx, item in enumerate(submission_items, start=1):
+            results.append(run_single_submission(page, detail, item, drone_name, drone_uas_code, driver_name, idx, len(submission_items), run_log))
+        finalize_run_log(run_log)
+        write_submit_log(run_log)
         print('全部提交流程结束，结果摘要:')
         print(json.dumps(core.sanitize_for_json(results), ensure_ascii=False, indent=2)[:8000])
     finally:
