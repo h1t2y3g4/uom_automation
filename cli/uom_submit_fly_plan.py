@@ -56,6 +56,12 @@ def build_run_log(submission_items):
         'total': len(submission_items),
         'successCount': 0,
         'failureCount': 0,
+        'loginFlow': {
+            'attemptedAutoLogin': False,
+            'statusBefore': None,
+            'loginResult': None,
+            'statusAfter': None,
+        },
         'items': [
             {
                 'pairIndex': idx,
@@ -208,10 +214,16 @@ def main():
     driver_name = cfg.get("driver", {}).get("name", "config.json 中的 driver.name")
     playwright_handle, context, page = core.launch_context(headless=False)
     try:
-        status = core.ensure_main_page(page)
-        print('主站状态:')
-        print(json.dumps(status, ensure_ascii=False, indent=2))
-        core.require_reliable_main_login(status, context, '当前不在可靠的主站已登录状态，停止自动提交流程，避免在错误页面上继续执行。')
+        login_flow = core.ensure_main_login_with_auto_sms(page)
+        print('主站状态/自动登录结果:')
+        print(json.dumps(login_flow, ensure_ascii=False, indent=2))
+        status = login_flow.get('statusAfter') or {}
+        if not status.get('hasMainLogin') or status.get('onLoginPage') or '#/login' in (status.get('url') or ''):
+            run_log = build_run_log([])
+            run_log['status'] = 'login_failed'
+            run_log['loginFlow'] = core.sanitize_for_json(login_flow)
+            write_submit_log(run_log)
+        core.require_reliable_main_login(status, context, '当前不在可靠的主站已登录状态，自动登录后仍失败，停止自动提交流程，避免在错误页面上继续执行。')
         print('进入 一般飞行活动 ...')
         core.open_fly_activity(page)
         core.time.sleep(6)
@@ -225,6 +237,7 @@ def main():
             print('[compat] --use-time-list 已废弃，当前按 submit_plan.json 处理。')
         submission_items = core.resolve_submission_items(cfg, detail, args)
         run_log = build_run_log(submission_items)
+        run_log['loginFlow'] = core.sanitize_for_json(login_flow)
         write_submit_log(run_log)
         print('本轮计划列表:')
         for idx, item in enumerate(submission_items, start=1):

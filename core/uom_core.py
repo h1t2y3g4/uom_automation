@@ -1974,6 +1974,25 @@ def require_reliable_main_login(status, context, message):
         raise SystemExit(2)
 
 
+def ensure_main_login_with_auto_sms(page, settle_seconds=8):
+    status_before = ensure_main_page(page, settle_seconds=settle_seconds)
+    result = {
+        'statusBefore': status_before,
+        'attemptedAutoLogin': False,
+        'loginResult': None,
+        'statusAfter': status_before,
+    }
+    if status_before.get('hasMainLogin') and not status_before.get('onLoginPage'):
+        return result
+
+    result['attemptedAutoLogin'] = True
+    login_result = login_via_sms(page)
+    result['loginResult'] = login_result
+    status_after = ensure_main_page(page, settle_seconds=3)
+    result['statusAfter'] = status_after
+    return result
+
+
 def fetch_latest_detail(page):
     latest = get_latest_plan(page)
     if not latest.get('ok'):
