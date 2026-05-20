@@ -17,6 +17,7 @@ uom_core.py - UOM 持久化浏览器核心能力与统一 CLI 入口
 
 import base64
 import json
+import os
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -497,24 +498,24 @@ def get_login_captcha(page):
     return str(CAPTCHA_FILE), res["uuid"]
 
 
-def login_via_sms(page):
-    phone = load_phone()
-    page.goto(BASE_URL, wait_until="domcontentloaded", timeout=60000)
-    time.sleep(3)
-    dismiss_popup(page)
-    comp = wait_for_login_component(page)
-    if not comp:
-        raise RuntimeError("找不到登录组件")
+def is_success_code(code):
+    return str(code) in ["0", "1"]
 
-    captcha_path, _uuid = get_login_captcha(page)
+
+def fetch_login_captcha_with_ocr(page):
+    captcha_path, uuid = get_login_captcha(page)
     ocr = solve_captcha(captcha_path)
     print(f"验证码图片: {captcha_path}")
     print(f"OCR 识别: {ocr or '失败'}")
-    captcha = input(f"请输入图形验证码（回车默认使用 OCR={ocr}）: ").strip() or (ocr or "")
-    if not captcha:
-        raise RuntimeError("图形验证码为空")
+    return {
+        'captchaPath': captcha_path,
+        'uuid': uuid,
+        'ocr': ocr,
+    }
 
-    sms_result = page.evaluate(
+
+def request_login_sms(page, phone, captcha):
+    return page.evaluate(
         """
         async ([phone, captcha]) => {
             const app = document.querySelector('#app').__vue__;
@@ -537,15 +538,10 @@ def login_via_sms(page):
         """,
         [phone, captcha],
     )
-    print("发短信返回:", sms_result)
-    if str(sms_result.get("code")) not in ["0", "1", 0, 1]:
-        raise RuntimeError(f"短信发送失败: {sms_result}")
 
-    sms = input("请输入短信验证码: ").strip()
-    if not sms:
-        raise RuntimeError("短信验证码为空")
 
-    submit_result = page.evaluate(
+def submit_login_sms_code(page, sms_code):
+    return page.evaluate(
         """
         ([smsCode]) => {
             const app = document.querySelector('#app').__vue__;
@@ -565,18 +561,93 @@ def login_via_sms(page):
             }
         }
         """,
-        [sms],
+        [sms_code],
     )
-    if not submit_result.get("ok"):
-        return submit_result
 
-    deadline = time.time() + 20
+
+def poll_login_result(page, timeout_s=20):
+    deadline = time.time() + timeout_s
     while time.time() < deadline:
         status = check_main_login(page)
         if status.get("hasMainLogin"):
             return {"ok": True, "status": status}
         time.sleep(1)
     return {"ok": False, "error": "登录后仍未进入主站", "status": check_main_login(page)}
+
+
+def is_captcha_error_response(payload):
+    text = json.dumps(payload, ensure_ascii=False) if isinstance(payload, (dict, list)) else str(payload)
+    return '图形验证码错误' in text
+
+
+def is_sms_still_valid_response(payload):
+    text = json.dumps(payload, ensure_ascii=False) if isinstance(payload, (dict, list)) else str(payload)
+    return '短信验证码还在有效期内' in text
+
+
+def should_prompt_for_sms_in_interactive_mode():
+    return os.environ.get('UOM_SMS_CODE') is None
+
+
+def login_via_sms(page):
+    phone = load_phone()
+    page.goto(BASE_URL, wait_until="domcontentloaded", timeout=60000)
+    time.sleep(3)
+    dismiss_popup(page)
+    comp = wait_for_login_component(page)
+    if not comp:
+        raise RuntimeError("找不到登录组件")
+
+    login_trace = {
+        'usedOcrAsDefaultCaptcha': True,
+        'captchaAttempts': [],
+        'smsCodeSource': 'env' if os.environ.get('UOM_SMS_CODE') else 'interactive',
+        'waitedForSmsInput': False,
+        'reusedExistingSmsCode': False,
+    }
+
+    captcha_meta = fetch_login_captcha_with_ocr(page)
+    captcha = (captcha_meta.get('ocr') or '').strip()
+    if not captcha:
+        raise RuntimeError("OCR 未识别出图形验证码，当前流程已改为默认直接使用 OCR，不再阻塞等待手输图形验证码")
+
+    sms_result = request_login_sms(page, phone, captcha)
+    login_trace['captchaAttempts'].append({
+        'captcha': captcha,
+        'uuid': captcha_meta.get('uuid'),
+        'ocr': captcha_meta.get('ocr'),
+        'smsResult': sms_result,
+    })
+    print("发短信返回:", sms_result)
+
+    if not is_success_code(sms_result.get("code")):
+        if is_sms_still_valid_response(sms_result):
+            print('检测到短信验证码仍在有效期内：不会再次发送短信，后续将优先使用你手上的上一条短信验证码继续登录。')
+            login_trace['reusedExistingSmsCode'] = True
+        elif is_captcha_error_response(sms_result):
+            raise RuntimeError(
+                '本次发短信返回图形验证码错误。为避免重复发送短信导致限制，当前流程不会自动再次发短信。'
+                '请优先使用你手上上一次收到且仍在 10 分钟有效期内的短信验证码继续登录；'
+                '若你确认当前没有可复用短信码，再重新发起一次登录流程。'
+            )
+        else:
+            raise RuntimeError(f"短信发送失败: {sms_result}")
+
+    sms = os.environ.get('UOM_SMS_CODE', '').strip()
+    if should_prompt_for_sms_in_interactive_mode():
+        login_trace['waitedForSmsInput'] = True
+        sms = input("请输入短信验证码: ").strip()
+    if not sms:
+        raise RuntimeError("短信验证码为空")
+
+    submit_result = submit_login_sms_code(page, sms)
+    if not submit_result.get("ok"):
+        submit_result['loginTrace'] = login_trace
+        return submit_result
+
+    poll_result = poll_login_result(page)
+    poll_result['loginTrace'] = login_trace
+    return poll_result
 
 
 def check_main_login(page):
