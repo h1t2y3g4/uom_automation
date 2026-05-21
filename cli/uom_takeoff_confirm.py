@@ -7,7 +7,8 @@ uom_takeoff_confirm.py - 检测临近起飞计划并自动提交起飞确认
 - 自动进入一般飞行活动页面并读取最近计划详情
 - 过滤掉已过期计划，只保留未来计划
 - 检测 1 小时内即将起飞且尚未提交起飞确认的计划
-- 自动提交起飞确认，准备情况固定填写“准备完毕”
+- 通过页面交互方式逐条提交起飞确认，准备情况固定填写“准备完毕”
+- 支持同一轮循环处理多个候选计划
 - 将运行结果写入日志文件
 
 用法：
@@ -117,82 +118,29 @@ def detect_candidates(payload, window_minutes):
     }
 
 
-def submit_takeoff_confirmation(page, plan_id, prepare_text):
-    return page.evaluate(
-        """
-        async ([planId, prepareText]) => {
-            const iframe = document.querySelector('iframe');
-            if (!iframe) return {ok:false, error:'no iframe'};
-            const doc = iframe.contentDocument;
-            if (!doc) return {ok:false, error:'no iframe doc'};
-            const src = iframe.src;
-            const u = new URL(src, location.origin);
-            const ticket = u.searchParams.get('ticket');
-            const userName = u.searchParams.get('userName');
-            const cookie = doc.cookie || '';
-            const m = cookie.match(/(?:^|; )PUB-Token=([^;]+)/);
-            const pubToken = m ? decodeURIComponent(m[1]) : null;
-            if (!(ticket && userName && pubToken)) {
-                return {ok:false, error:'missing auth', ticket, userName, hasToken: !!pubToken};
-            }
-
-            const payload = {
-                planId,
-                prepareSts: prepareText,
-                prepareDesc: prepareText,
-                remark: prepareText,
-            };
-
-            const candidatePaths = [
-                '/oapi/pub/takeoff/confirm',
-                '/oapi/pub/takeoff/save',
-                '/oapi/pub/planTakeoff/confirm',
-                '/oapi/pub/planTakeoff/save',
-            ];
-
-            const attempts = [];
-            for (const path of candidatePaths) {
-                try {
-                    const resp = await iframe.contentWindow.fetch(path, {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': 'Bearer ' + pubToken,
-                            'pubUserName': userName,
-                            'ticket': ticket,
-                            'deviceType': 'PC',
-                            'Content-Type': 'application/json;charset=UTF-8'
-                        },
-                        credentials: 'include',
-                        body: JSON.stringify(payload),
-                    });
-                    const text = await resp.text();
-                    let data = null;
-                    try { data = JSON.parse(text); } catch (e) {}
-                    const ok = resp.ok && (!data || data.code === 200 || data.code === 0 || data.success === true);
-                    const attempt = {
-                        path,
-                        httpStatus: resp.status,
-                        ok,
-                        data,
-                        raw: text.slice(0, 1000),
-                    };
-                    attempts.push(attempt);
-                    if (ok) {
-                        return {ok:true, path, attempts, payload, response: attempt};
-                    }
-                } catch (error) {
-                    attempts.push({
-                        path,
-                        ok: false,
-                        error: String(error),
-                    });
-                }
-            }
-            return {ok:false, error:'all_candidate_paths_failed', payload, attempts};
-        }
-        """,
-        [plan_id, prepare_text],
-    )
+def run_single_takeoff_confirmation(page, candidate):
+    open_res = core.open_takeoff_confirmation(page, candidate['planId'], candidate['planBeg'])
+    wait_res = core.wait_for_takeoff_page(page)
+    precheck = core.get_takeoff_form_snapshot(page, f"takeoff_precheck_{candidate['planId']}")
+    fill_res = core.fill_takeoff_confirmation_form(page, PREPARE_STATUS_TEXT)
+    core.time.sleep(1)
+    postfill = core.get_takeoff_form_snapshot(page, f"takeoff_postfill_{candidate['planId']}")
+    submit_res = None
+    final_snapshot = None
+    if fill_res.get('ok'):
+        submit_res = core.submit_takeoff_confirmation_ui(page)
+        core.time.sleep(3)
+        final_snapshot = core.get_takeoff_form_snapshot(page, f"takeoff_postsubmit_{candidate['planId']}")
+    return {
+        'candidate': candidate,
+        'open': core.sanitize_for_json(open_res),
+        'wait': core.sanitize_for_json(wait_res),
+        'precheck': core.sanitize_for_json(precheck),
+        'fill': core.sanitize_for_json(fill_res),
+        'postfill': core.sanitize_for_json(postfill),
+        'submit': core.sanitize_for_json(submit_res),
+        'finalSnapshot': core.sanitize_for_json(final_snapshot),
+    }
 
 
 def main(argv=None):
@@ -250,27 +198,51 @@ def main(argv=None):
             run_log['status'] = 'dry_run'
             return
 
-        for item in detection['candidates']:
-            detail = item['detail']
-            candidate = item['candidate']
-            print(f"提交起飞确认: planId={candidate['planId']} planBeg={candidate['planBeg']}")
-            submit_result = submit_takeoff_confirmation(page, candidate['planId'], PREPARE_STATUS_TEXT)
-            entry = {
-                'candidate': candidate,
-                'submitResult': core.sanitize_for_json(submit_result),
-            }
-            if submit_result.get('ok'):
-                refreshed = core.get_plan_detail(page, candidate['planId'])
-                entry['detailAfterSubmit'] = core.sanitize_for_json(refreshed)
-            else:
-                entry['detailAfterSubmit'] = None
-            run_log['submitted'].append(entry)
-            write_run_log(run_log)
+        if not detection['candidates']:
+            run_log['status'] = 'no_candidate'
+            return
 
-        if run_log['submitted'] and all((x.get('submitResult') or {}).get('ok') for x in run_log['submitted']):
-            run_log['status'] = 'completed'
-        elif run_log['submitted']:
+        for idx, item in enumerate(detection['candidates'], start=1):
+            candidate = item['candidate']
+            print(f"\n===== 起飞确认 {idx}/{len(detection['candidates'])} =====")
+            print(f"planId={candidate['planId']} planBeg={candidate['planBeg']}")
+            try:
+                result_entry = run_single_takeoff_confirmation(page, candidate)
+                run_log['submitted'].append(result_entry)
+                submit_info = result_entry.get('submit') or {}
+                if submit_info.get('hasFailure'):
+                    run_log['status'] = 'partial_failure'
+                write_run_log(run_log)
+                print('本条结果:')
+                print(json.dumps({
+                    'candidate': candidate,
+                    'openOk': (result_entry.get('open') or {}).get('ok'),
+                    'waitReady': (result_entry.get('wait') or {}).get('ready'),
+                    'fillOk': (result_entry.get('fill') or {}).get('ok'),
+                    'submitOk': (submit_info.get('ok') if submit_info else None),
+                    'submitHasSuccess': submit_info.get('hasSuccess') if submit_info else None,
+                    'submitHasFailure': submit_info.get('hasFailure') if submit_info else None,
+                }, ensure_ascii=False, indent=2))
+            except Exception as e:
+                error_payload = {
+                    'candidate': candidate,
+                    'type': type(e).__name__,
+                    'message': str(e),
+                    'traceback': traceback.format_exc(),
+                }
+                run_log['errors'].append(error_payload)
+                run_log['submitted'].append({
+                    'candidate': candidate,
+                    'error': error_payload,
+                })
+                run_log['status'] = 'partial_failure'
+                write_run_log(run_log)
+
+        if run_log['errors']:
             run_log['status'] = 'partial_failure'
+        elif run_log['submitted']:
+            failures = [x for x in run_log['submitted'] if ((x.get('submit') or {}).get('hasFailure'))]
+            run_log['status'] = 'partial_failure' if failures else 'completed'
         else:
             run_log['status'] = 'no_candidate'
     except SystemExit:
