@@ -1230,41 +1230,56 @@ def wait_for_business_iframe_state(page, timeout_s=20):
     return last_state or {"ok": False, "iframeCount": 0}
 
 
-def open_airspace_query_via_real_nav(page):
+def open_business_page_via_real_nav(page, top_menu_text, cascader_path, wait_after_click_s=4):
     page.goto(f"{BASE_URL}/#/main", wait_until="domcontentloaded", timeout=60000)
     time.sleep(3)
     dismiss_popup(page)
-    run_manage_click = click_top_menu_button(page, '运行管理', timeout_s=10)
-    if not run_manage_click.get('ok'):
-        run_manage_click = click_visible_text(page, '运行管理', timeout_s=6, exact=True)
-    if not run_manage_click.get('ok'):
+    top_menu_click = click_top_menu_button(page, top_menu_text, timeout_s=10)
+    if not top_menu_click.get('ok'):
+        top_menu_click = click_visible_text(page, top_menu_text, timeout_s=6, exact=True)
+    if not top_menu_click.get('ok'):
         raise RuntimeError({
-            'error': '点击运行管理失败',
-            'click': run_manage_click,
+            'error': '点击顶栏菜单失败',
+            'top_menu_text': top_menu_text,
+            'click': top_menu_click,
             'snapshot': debug_menu_snapshot(page),
         })
     time.sleep(2)
     dismiss_popup(page)
-    airspace_click = click_cascader_path(page, ['运行管理', '空域信息查询'], timeout_s=12)
-    if not airspace_click.get('ok'):
-        airspace_click = click_visible_text(page, '运行管理 / 空域信息查询', timeout_s=8, exact=False)
-    if not airspace_click.get('ok'):
-        airspace_click = click_visible_text(page, '空域信息查询', timeout_s=8, exact=False)
-    if not airspace_click.get('ok'):
+    cascader_click = click_cascader_path(page, cascader_path, timeout_s=12)
+    if not cascader_click.get('ok'):
+        full_path_text = ' / '.join(cascader_path)
+        cascader_click = click_visible_text(page, full_path_text, timeout_s=8, exact=False)
+    if not cascader_click.get('ok') and cascader_path:
+        cascader_click = click_visible_text(page, cascader_path[-1], timeout_s=8, exact=False)
+    if not cascader_click.get('ok'):
         raise RuntimeError({
-            'error': '点击空域信息查询失败',
-            'run_manage_click': run_manage_click,
-            'click': airspace_click,
+            'error': '点击级联菜单失败',
+            'top_menu_text': top_menu_text,
+            'cascader_path': cascader_path,
+            'top_menu_click': top_menu_click,
+            'click': cascader_click,
             'snapshot': debug_menu_snapshot(page),
         })
-    time.sleep(4)
+    time.sleep(wait_after_click_s)
     iframe_state = wait_for_business_iframe_state(page, timeout_s=20)
     return {
         'ok': bool(iframe_state.get('iframeCount')),
-        'runManageClick': run_manage_click,
-        'airspaceClick': airspace_click,
+        'topMenuText': top_menu_text,
+        'cascaderPath': cascader_path,
+        'topMenuClick': top_menu_click,
+        'cascaderClick': cascader_click,
         'iframeState': iframe_state,
     }
+
+
+def open_airspace_query_via_real_nav(page):
+    return open_business_page_via_real_nav(
+        page,
+        top_menu_text='运行管理',
+        cascader_path=['运行管理', '空域信息查询'],
+        wait_after_click_s=4,
+    )
 
 
 def open_layout_menu_item(page, target_text=None, target_id=None, expect_iframe=True):
@@ -1431,6 +1446,19 @@ def open_layout_menu_item(page, target_text=None, target_id=None, expect_iframe=
 
 
 def open_fly_activity(page):
+    try:
+        nav_res = open_business_page_via_real_nav(
+            page,
+            top_menu_text='运行管理',
+            cascader_path=['运行管理', '飞行活动申请', '一般飞行活动'],
+            wait_after_click_s=5,
+        )
+        iframe_state = nav_res.get('iframeState') or {}
+        if iframe_state.get('iframeCount'):
+            return True
+    except Exception:
+        pass
+
     open_layout_menu_item(
         page,
         target_text='一般飞行活动',
