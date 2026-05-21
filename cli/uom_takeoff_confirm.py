@@ -6,7 +6,7 @@ uom_takeoff_confirm.py - 检测临近起飞计划并自动提交起飞确认
 - 复用持久化浏览器登录态
 - 自动进入一般飞行活动页面并读取最近计划详情
 - 过滤掉已过期计划，只保留未来计划
-- 检测 1 小时内即将起飞且尚未提交起飞确认的计划
+- 检测 2 小时内即将起飞且尚未提交起飞确认的计划
 - 通过页面交互方式逐条提交起飞确认，准备情况固定填写“准备完毕”
 - 支持同一轮循环处理多个候选计划
 - 将运行结果写入日志文件
@@ -15,7 +15,7 @@ uom_takeoff_confirm.py - 检测临近起飞计划并自动提交起飞确认
   python3 uom_takeoff_confirm.py
   python3 uom_takeoff_confirm.py --headless
   python3 uom_takeoff_confirm.py --dry-run
-  python3 uom_takeoff_confirm.py --window-minutes 60
+  python3 uom_takeoff_confirm.py --window-minutes 120
 """
 
 import argparse
@@ -36,7 +36,7 @@ def build_parser():
     parser = argparse.ArgumentParser(description='UOM 起飞确认脚本')
     parser.add_argument('--headless', action='store_true', help='无头模式运行浏览器')
     parser.add_argument('--dry-run', action='store_true', help='只检测，不实际提交起飞确认')
-    parser.add_argument('--window-minutes', type=int, default=60, help='起飞前检测窗口，默认 60 分钟')
+    parser.add_argument('--window-minutes', type=int, default=120, help='起飞前检测窗口，默认 120 分钟')
     parser.add_argument('--output', default=str(core.DEFAULT_RECENT_PLAN_DETAILS_FILE), help='计划缓存输出文件路径')
     return parser
 
