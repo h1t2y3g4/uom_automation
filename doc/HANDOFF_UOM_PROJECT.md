@@ -57,12 +57,16 @@
 11. 自动选择操控员
 12. 自动触发提交和二次确认
 13. 提交后等待并重新读取最近计划做验证
+14. 进入 `运行管理 -> 空域信息查询`
+15. 对输入的 WGS84 多边形执行“适飞空域”图层覆盖判断
+16. 将空域查询结果缓存到本地，重复查询优先命中缓存
 
 仍需持续关注：
 1. UOM 服务端偶发 500 / 异常响应
 2. 页面异步渲染导致的时序不稳定
 3. 批量提交列表模式下的稳定性
 4. 如果站点改版，新增页控件结构可能再次变化
+5. 空域查询当前仅判断“与适飞空域图层的覆盖关系”，不是最终审批结论
 
 --------------------------------------------------
 ## 3. 当前推荐技术路线
@@ -202,6 +206,26 @@ deviceType: PC
 3. 自动化结论应优先看提交日志和提交后最近计划回读结果
 4. 如果后续站点改版或校验逻辑变动，仍可能需要重新创建临时调试脚本
 
+### 4.6 空域查询已形成可复用 CLI 能力
+
+已确认：
+1. `cli/uom_airspace_probe.py query` 已可作为正式入口，供 AI 直接查询“某块区域是否落在适飞空域图层上”
+2. 输入统一使用 `polygonWgs84` 字符串：`lng,lat|lng,lat|...`
+3. 查询会优先复用持久化登录态；若登录真的失效，脚本会沿用现有自动短信登录链路
+4. 查询结果会写入 `cache/airspace_query_cache.json`
+5. 同一块多边形再次查询时，默认优先命中缓存，不再重新打开网页
+
+当前判断口径：
+- `inside_suitable`
+- `partial_overlap`
+- `outside_suitable`
+- `unknown`
+
+注意：
+- 这只是“与官方适飞空域图层的覆盖关系”
+- 不是飞行申请审批结论
+- 不是机场净空、临时管制、天气风险等综合判断
+
 --------------------------------------------------
 ## 5. 当前项目结构
 --------------------------------------------------
@@ -275,6 +299,30 @@ python3 uom_submit_fly_plan.py --use-submit-plan --dry-run
 - 现在已按实际职责改名为 `uom_submit_fly_plan.py`
 - 文档层面不再按“半自动”定位描述它，而统一按“自动提交”理解
 
+### 5.4 空域探测 / 多边形查询入口
+
+#### `uom_airspace_probe.py`
+职责：
+- `probe`：进入 `运行管理 -> 空域信息查询`，输出 iframe / 地图 / 资源加载调试信息
+- `query`：输入多边形，判断它和“适飞空域”图层的覆盖关系
+- 自动复用持久化登录态；确实掉线时沿用现有自动短信登录逻辑
+- 自动把查询结果缓存到本地
+
+常用命令：
+
+```bash
+python3 cli/uom_airspace_probe.py
+python3 cli/uom_airspace_probe.py probe --headless
+python3 cli/uom_airspace_probe.py query --polygon-wgs84 "104.01902676,30.52132641|104.01574373,30.51483813|104.02269602,30.51310046|104.02413368,30.51722276"
+python3 cli/uom_airspace_probe.py query --polygon-wgs84 "..." --force-refresh
+```
+
+输出重点：
+- `status=online_ok`：本轮真实打开网页完成判断
+- `status=cache_hit`：本轮直接命中本地缓存
+- `status=login_required`：当前仍未进入可靠主站登录态
+- `evidence`：保留 zoom、tile 数量、像素覆盖率、登录链路等证据
+
 ### 5.4 配置文件
 
 #### `config/config.json`
@@ -289,6 +337,14 @@ python3 uom_submit_fly_plan.py --use-submit-plan --dry-run
 
 #### `config/submit_plan.json`
 保存待提交计划列表；AI 若要批量提交，默认优先修改这个文件。
+
+#### `cache/airspace_query_cache.json`
+保存空域多边形查询缓存。
+
+约定：
+- 命中缓存时不再打开网页
+- 若明确要重查网页，使用 `--force-refresh`
+- 这是运行时缓存，不是人工维护的配置文件
 
 推荐结构示例：
 
@@ -314,6 +370,12 @@ python3 uom_submit_fly_plan.py --use-submit-plan --dry-run
 
 非常重要。
 这是当前复用登录态的核心资产，不要随意删除。
+
+补充约定（2026-05-22）：
+- 当前 profile 已加单实例锁
+- 同一时刻只能有一个 UOM 脚本占用它
+- 若脚本报“另一个 UOM 脚本正在占用持久化浏览器 profile”，应先结束另一条在跑的 UOM 命令，再继续
+- 锁文件属于运行时产物，统一放在 `runtime/` 下，不放项目根目录
 
 ### 5.6 其他重要文件
 
@@ -403,6 +465,25 @@ python3 uom_submit_fly_plan.py --use-submit-plan
 
 ```bash
 python3 uom_submit_fly_plan.py --use-time-list
+```
+
+### 6.10 探测空域信息查询页
+
+```bash
+python3 cli/uom_airspace_probe.py
+python3 cli/uom_airspace_probe.py probe --headless
+```
+
+### 6.11 查询一块区域是否与适飞空域重叠
+
+```bash
+python3 cli/uom_airspace_probe.py query --polygon-wgs84 "104.01902676,30.52132641|104.01574373,30.51483813|104.02269602,30.51310046|104.02413368,30.51722276"
+```
+
+### 6.12 强制忽略缓存，重新打开网页查询
+
+```bash
+python3 cli/uom_airspace_probe.py query --polygon-wgs84 "..." --force-refresh
 ```
 
 --------------------------------------------------

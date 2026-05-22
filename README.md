@@ -8,8 +8,11 @@
 .
 ├── cli/                    # CLI 脚本入口
 │   ├── uom_login.py        # 登录/状态/浏览器入口
+│   ├── uom_airspace_probe.py  # 空域页探测 / 多边形适飞查询
 │   ├── uom_read_plan.py    # 读取飞行计划详情
 │   └── uom_submit_fly_plan.py  # 自动提交飞行计划
+├── cache/                  # 运行时缓存
+│   └── airspace_query_cache.json  # 多边形适飞查询结果缓存
 ├── config/                 # 配置文件
 │   ├── config.json         # 主配置文件
 │   ├── airspace.json       # 本地常用空域缓存
@@ -57,6 +60,22 @@ python3 cli/uom_submit_fly_plan.py --dry-run
 python3 cli/uom_submit_fly_plan.py --use-submit-plan --dry-run
 ```
 
+空域探测 / 多边形适飞查询：
+
+```bash
+python3 cli/uom_airspace_probe.py
+python3 cli/uom_airspace_probe.py probe --headless
+python3 cli/uom_airspace_probe.py query --polygon-wgs84 "104.01902676,30.52132641|104.01574373,30.51483813|104.02269602,30.51310046|104.02413368,30.51722276"
+python3 cli/uom_airspace_probe.py query --polygon-wgs84 "..." --force-refresh
+```
+
+说明：
+- `probe` 主要用于调试页面与地图加载
+- `query` 是正式给 AI / 脚本调用的空域查询入口
+- `query` 会优先复用登录态；真掉线时会沿用现有自动短信登录
+- 同一块多边形再次查询时，默认优先命中 `cache/airspace_query_cache.json`
+- 当前返回的是“与适飞空域图层的覆盖关系”，不是最终审批结论
+
 ## 当前主路径约定
 
 - AI 触发批量提交时，默认应优先修改 `config/submit_plan.json`，再执行 `python3 cli/uom_submit_fly_plan.py --use-submit-plan`
@@ -68,6 +87,7 @@ python3 cli/uom_submit_fly_plan.py --use-submit-plan --dry-run
 
 ### `cli/` - CLI 脚本入口
 - `uom_login.py`: 登录/状态检查、打开浏览器
+- `uom_airspace_probe.py`: 空域页探测，以及基于官方适飞图层的多边形查询
 - `uom_read_plan.py`: 读取最近飞行计划详情（默认 10 条）
 - `uom_submit_fly_plan.py`: 自动提交飞行计划
 
@@ -89,6 +109,14 @@ python3 cli/uom_submit_fly_plan.py --use-submit-plan --dry-run
 - `config.json`: 主配置文件（认证、联系人、无人机、操控员、默认参数）
 - `airspace.json`: 本地常用空域缓存，按名称提供经纬度
 - `submit_plan.json`: 待提交计划列表，AI 批量提交默认优先改这个文件
+
+### `cache/` - 运行时缓存
+- `airspace_query_cache.json`: 空域多边形查询缓存；命中缓存时不会再次打开网页
+
+### 持久化浏览器约定
+- `.playwright-uom-profile` 是当前复用登录态的核心目录
+- 同一时刻只能有一个 UOM 脚本占用它；若锁冲突，应先结束另一条在跑的 UOM 命令
+- 锁文件属于运行时产物，现统一放在 `runtime/` 下，不再放根目录
 
 ### `doc/` - 文档
 - `HANDOFF_UOM_PROJECT.md`: 项目完整交接文档

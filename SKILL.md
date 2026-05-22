@@ -1,6 +1,6 @@
 ---
 name: uom-automation
-description: UOM 自动化项目操作索引：按接口调用登录/状态脚本、读取计划脚本、自动提交脚本，并在需要时修改主配置/空域缓存/提交列表。
+description: UOM 自动化项目操作索引：按接口调用登录/状态脚本、空域多边形查询脚本、读取计划脚本、自动提交脚本，并在需要时修改主配置/空域缓存/提交列表。
 tags: [uom, drone, automation, caac, 无人机, 飞行申请]
 ---
 
@@ -27,6 +27,7 @@ tags: [uom, drone, automation, caac, 无人机, 飞行申请]
 4. 需要实现或修改逻辑时，再读：
    - `~/hermes_interface/uom-automation/core/uom_core.py`
    - `~/hermes_interface/uom-automation/cli/uom_login.py`
+   - `~/hermes_interface/uom-automation/cli/uom_airspace_probe.py`
    - `~/hermes_interface/uom-automation/cli/uom_submit_fly_plan.py`
    - `~/hermes_interface/uom-automation/cli/uom_read_plan.py`
 
@@ -92,7 +93,73 @@ python3 cli/uom_read_plan.py --output /path/to/output.json
 python3 cli/uom_read_plan.py --headless
 ```
 
-### 4. 底层公共能力
+### 4. 空域多边形查询入口
+文件：`cli/uom_airspace_probe.py`
+
+用途：
+- `probe`：进入“空域信息查询”页，输出页面、iframe、地图、资源加载等调试信息
+- `query`：输入一块 WGS84 多边形，判断它和官方“适飞空域”图层的覆盖关系
+- 查询结果会写入本地缓存；同一块多边形再次查询时默认优先命中缓存
+
+常用命令：
+```bash
+python3 cli/uom_airspace_probe.py
+python3 cli/uom_airspace_probe.py probe --headless
+python3 cli/uom_airspace_probe.py query --polygon-wgs84 "104.01902676,30.52132641|104.01574373,30.51483813|104.02269602,30.51310046|104.02413368,30.51722276"
+python3 cli/uom_airspace_probe.py query --polygon-wgs84 "..." --force-refresh
+```
+
+返回结果约定：
+- `status=online_ok`：本轮真实打开网页并完成判断
+- `status=cache_hit`：命中 `cache/airspace_query_cache.json`
+- `status=login_required`：脚本已尝试复用/自动登录，但当前仍未进入可靠主站登录态
+- `judgement` 当前只回答：
+  - `inside_suitable`
+  - `partial_overlap`
+  - `outside_suitable`
+  - `unknown`
+
+AI 使用约定：
+- 需要判断“某块区域是不是在适飞区”时，优先调这个脚本，不要自己重新点网页
+- 输入直接传 `--polygon-wgs84 "lng,lat|lng,lat|..."`，不要发明新坐标格式
+- 若只是重复问同一块区域，默认不要加 `--force-refresh`
+- 只有在怀疑缓存过旧、或明确要重查网页时，才加 `--force-refresh`
+- 该判断口径目前仅是“与官方适飞空域图层的覆盖关系”，不是审批结果、也不是最终合规结论
+
+AI 调用模板：
+- 若用户已经直接给出一块区域的经纬度：
+  - 先整理成 `polygonWgs84="lng,lat|lng,lat|lng,lat|..."`，点顺序沿边界依次排列即可
+  - 再执行：
+    ```bash
+    python3 cli/uom_airspace_probe.py query --polygon-wgs84 "..."
+    ```
+- 若用户给的是“某个地点”而不是多边形：
+  - 先向用户要边界点，或先把需求收敛成“以该点为中心的一小块矩形/多边形”
+  - 不要擅自编造坐标
+- 若用户只是重复问刚查过的同一块区域：
+  - 默认直接执行同一条 `query` 命令，不加 `--force-refresh`
+- 若用户明确说“重新查一次网页最新结果”：
+  - 才执行：
+    ```bash
+    python3 cli/uom_airspace_probe.py query --polygon-wgs84 "..." --force-refresh
+    ```
+
+AI 对用户的推荐输出格式：
+```text
+查询区域 polygonWgs84:
+104.01902676,30.52132641|104.01574373,30.51483813|104.02269602,30.51310046|104.02413368,30.51722276
+
+查询结果:
+- status: online_ok
+- judgement: outside_suitable
+- cacheHit: false
+
+说明:
+- 当前结论表示这块区域与“适飞空域”图层没有重叠
+- 这不是最终审批结论，只是图层覆盖关系判断
+```
+
+### 5. 底层公共能力
 文件：`core/uom_core.py`
 
 用途：
@@ -107,6 +174,7 @@ python3 cli/uom_read_plan.py --headless
 - `config/config.json`：主配置（认证、联系人、无人机、操控员、默认参数）
 - `config/airspace.json`：本地常用空域缓存；提交前按名称换算成经纬度
 - `config/submit_plan.json`：待提交批次列表；每项同时包含时间和空域描述
+- `cache/airspace_query_cache.json`：空域多边形查询缓存；命中时不再打开网页
 
 AI 在需要改配置时，优先按职责修改：
 - 身份与默认参数改 `config/config.json`
@@ -168,6 +236,8 @@ AI 在需要改配置时，优先按职责修改：
 
 - 不要回退到旧的纯 API / RSAL 主线
 - 优先复用持久化浏览器 profile，减少短信登录
+- 当前 `.playwright-uom-profile` 已加单实例锁；同一时刻只能有一个 UOM 脚本占用它，若锁冲突应先结束另一条在跑的 UOM 命令
+- 锁文件属于运行时产物，统一放在 `runtime/` 下；不要把它当项目源码文件处理
 - 需要改流程时，公共逻辑优先收敛到 `core/uom_core.py`
 - 需要背景和历史结论时，不要在 `SKILL.md` 里找长篇说明，直接看 `doc/HANDOFF_UOM_PROJECT.md`
 - 当前约定：短信验证码回填保持 `stdin` 模式；若 AI 代跑脚本并检测到 `input("请输入短信验证码")` 阻塞，应使用后台 `pty` 进程 + 轮询输出 + 回写 stdin 的方式继续，不要把这一段改成新的文件轮询方案

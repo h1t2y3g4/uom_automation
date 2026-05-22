@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-uom_airspace_probe.py - 进入空域信息查询页面并探测地图/空域数据线索
+uom_airspace_probe.py - UOM 空域页探测与多边形适飞查询
 
 职责：
 - 复用持久化浏览器登录态，必要时自动短信登录
-- 进入运行管理下的“空域信息查询”
-- 输出页面、iframe、资源加载、地图对象、查询控件等调试信息
-- 可选停留浏览器，方便人工目视确认页面状态
+- `probe` 模式：进入运行管理下的“空域信息查询”，输出页面与地图调试信息
+- `query` 模式：输入多边形经纬度，在线判断与适飞空域图层的覆盖关系，并做本地缓存
 
 用法：
   python3 cli/uom_airspace_probe.py
-  python3 cli/uom_airspace_probe.py --pause
-  python3 cli/uom_airspace_probe.py --headless
+  python3 cli/uom_airspace_probe.py probe --pause
+  python3 cli/uom_airspace_probe.py query --polygon-wgs84 "104.0,30.5|104.1,30.5|104.1,30.6"
+  python3 cli/uom_airspace_probe.py query --polygon-wgs84 "104.0,30.5|104.1,30.5|104.1,30.6" --force-refresh
 """
 
 import argparse
@@ -27,21 +27,27 @@ AIRSPACE_PROBE_LOG = core.PROJECT_ROOT / 'log' / 'airspace_probe_log.json'
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(description='UOM 空域信息查询页面探测脚本')
+    parser = argparse.ArgumentParser(description='UOM 空域信息查询探测 / 多边形适飞查询脚本')
+    parser.add_argument('command', nargs='?', default='probe', choices=['probe', 'query'], help='默认 probe；query 用于多边形适飞查询')
     parser.add_argument('--headless', action='store_true', help='无头模式运行浏览器')
     parser.add_argument('--pause', action='store_true', help='完成后停留浏览器，按回车再关闭')
     parser.add_argument('--menu-text', default='空域信息查询', help='默认打开的业务菜单文本')
-    parser.add_argument('--output', default=str(AIRSPACE_PROBE_LOG), help='探测日志输出路径')
+    parser.add_argument('--output', default=None, help='输出路径；probe 默认写探测日志，query 默认只打印 JSON')
+    parser.add_argument('--polygon-wgs84', help='query 模式使用的多边形经纬度，格式 lng,lat|lng,lat|...')
+    parser.add_argument('--force-refresh', action='store_true', help='query 模式忽略本地缓存，强制重新在线查询')
     return parser
 
 
-def write_probe_log(output_path, payload):
+def write_json_output(output_path, payload):
+    if not output_path:
+        return None
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(core.sanitize_for_json(payload), ensure_ascii=False, indent=2),
         encoding='utf-8',
     )
+    return path
 
 
 def probe_airspace_page(page):
@@ -218,9 +224,9 @@ def probe_airspace_page(page):
     )
 
 
-def main(argv=None):
-    args = build_parser().parse_args(argv)
+def run_probe_mode(args):
     playwright_handle, context, page = core.launch_context(headless=args.headless)
+    output_path = args.output or str(AIRSPACE_PROBE_LOG)
     run_log = {
         'runStartedAt': core.format_local_datetime(core.get_now_local()),
         'runFinishedAt': None,
@@ -287,14 +293,71 @@ def main(argv=None):
         raise
     finally:
         run_log['runFinishedAt'] = core.format_local_datetime(core.get_now_local())
-        write_probe_log(args.output, run_log)
-        print(f'探测日志已写入: {args.output}')
+        write_json_output(output_path, run_log)
+        print(f'探测日志已写入: {output_path}')
         if args.pause:
             try:
                 input('浏览器保持打开中，按回车关闭...')
             except EOFError:
                 pass
         core.close_context(playwright_handle, context)
+
+
+def run_query_mode(args):
+    if not args.polygon_wgs84:
+        raise SystemExit('query 模式必须传 --polygon-wgs84')
+
+    normalized_polygon_wgs84 = core.normalize_polygon_wgs84(args.polygon_wgs84)
+    if not args.force_refresh:
+        cached = core.get_cached_airspace_query_result(normalized_polygon_wgs84)
+        if cached:
+            print(json.dumps(core.sanitize_for_json(cached), ensure_ascii=False, indent=2))
+            if args.output:
+                write_json_output(args.output, cached)
+            return
+
+    playwright_handle = None
+    context = None
+    query_result = None
+    try:
+        playwright_handle, context, page = core.launch_context(headless=args.headless)
+        query_result = core.query_airspace_polygon_online(page, context, normalized_polygon_wgs84)
+        if query_result.get('status') == 'online_ok':
+            core.store_airspace_query_result(normalized_polygon_wgs84, query_result)
+    except SystemExit:
+        raise
+    except Exception as e:
+        query_result = {
+            'status': 'error',
+            'judgement': 'unknown',
+            'polygonWgs84': normalized_polygon_wgs84,
+            'cacheHit': False,
+            'queriedAt': core.format_local_datetime(core.get_now_local()),
+            'evidence': {
+                'errorType': type(e).__name__,
+                'errorMessage': str(e),
+            },
+        }
+    finally:
+        if query_result is not None:
+            print(json.dumps(core.sanitize_for_json(query_result), ensure_ascii=False, indent=2))
+            if args.output:
+                write_json_output(args.output, query_result)
+        if args.pause and context is not None:
+            try:
+                input('浏览器保持打开中，按回车关闭...')
+            except EOFError:
+                pass
+        if playwright_handle is not None and context is not None:
+            core.close_context(playwright_handle, context)
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    if args.command == 'query':
+        run_query_mode(args)
+        return
+    run_probe_mode(args)
 
 
 if __name__ == '__main__':

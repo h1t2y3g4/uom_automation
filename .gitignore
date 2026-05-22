@@ -2,4 +2,6 @@ __pycache__/
 *.pyc
 .playwright-uom-profile/
 log/
+cache/
+runtime/
 config/config.json
