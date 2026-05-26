@@ -19,6 +19,8 @@ tags: [uom, drone, automation, caac, 无人机, 飞行申请]
 详细背景、历史坑点、技术结论、调试经验，统一看：
 - `~/hermes_interface/uom-automation/doc/HANDOFF_UOM_PROJECT.md`
 
+不要在沙盒里运行，直接在系统中运行。不然会找不到环境。
+
 ## 优先阅读顺序
 
 1. `~/hermes_interface/uom-automation/SKILL.md`
@@ -75,6 +77,7 @@ python3 cli/uom_submit_fly_plan.py --use-submit-plan --dry-run
 说明：
 - 这个脚本已不是"半自动"定位，当前文档统一按"自动提交"理解
 - AI 触发提交时，默认应优先走 `submit_plan.json` + `--use-submit-plan` 这条主路径
+- `submit_plan.json`文件相对路径在config/submit_plan.json。默认已经创建了的，先找一下，找不到才能创建。
 - `--use-time-list` 仅保留兼容，不应作为 AI 首选入口
 - 运行日志默认看：`log/manual_selection_log.json`，该文件始终保存最近一轮运行的整轮聚合结果（会覆盖上一轮，但保留本轮全部计划项）
 

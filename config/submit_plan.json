@@ -3,19 +3,27 @@
   "timezone": "UTC+8",
   "plans": [
     {
-      "planBeg": "2026-05-24 11:00:00",
-      "planEnd": "2026-05-24 18:00:00",
+      "planBeg": "2026-05-27 17:50:00",
+      "planEnd": "2026-05-27 18:30:00",
       "airspace": {
-        "type": "polygon",
-        "space": {
-          "polygonWgs84": "104.782280,29.695515|104.928620,29.695515|104.928620,29.822555|104.782280,29.822555",
-          "spcBottom": 0,
-          "spcTop": 120,
-          "groupName": "空域1",
-          "spcName": "香泽园酒楼(中铁·城市中心店)-10km范围",
-          "spaceShape": "面",
-          "spcShape": "1"
-        }
+        "type": "common_ref",
+        "name": "三江公园"
+      }
+    },
+    {
+      "planBeg": "2026-05-28 17:50:00",
+      "planEnd": "2026-05-28 18:30:00",
+      "airspace": {
+        "type": "common_ref",
+        "name": "三江公园"
+      }
+    },
+    {
+      "planBeg": "2026-05-29 17:50:00",
+      "planEnd": "2026-05-29 18:30:00",
+      "airspace": {
+        "type": "common_ref",
+        "name": "三江公园"
       }
     }
   ]
