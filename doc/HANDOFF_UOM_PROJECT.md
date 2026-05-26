@@ -1,6 +1,9 @@
 # UOM 自动提交飞行计划项目交接说明
 
-项目目录：`/home/skye/hermes_interface/uom-automation`
+路径变量约定：
+- `PROJECT_ROOT=/home/skye/hermes_interface/uom-automation`
+- `PROFILE_DIR=${PROJECT_ROOT}/.playwright-uom-profile`
+- 下文再次提到文件时，默认使用相对路径，或写作 ``${PROJECT_ROOT}/相对路径``
 
 这份文档是当前项目的完整交接说明。
 如果只看一份文档，就优先看这份。
@@ -366,7 +369,7 @@ python3 cli/uom_airspace_probe.py query --polygon-wgs84 "..." --force-refresh
 
 ### 5.5 持久化浏览器目录
 
-`/home/skye/hermes_interface/uom-automation/.playwright-uom-profile`
+`PROFILE_DIR`
 
 非常重要。
 这是当前复用登录态的核心资产，不要随意删除。

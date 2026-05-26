@@ -6,7 +6,10 @@ tags: [uom, drone, automation, caac, 无人机, 飞行申请]
 
 # UOM 自动化项目操作索引
 
-位置：`~/hermes_interface/uom-automation/`
+路径变量约定：
+- `PROJECT_ROOT=/home/skye/hermes_interface/uom-automation`
+- `HANDOFF_DOC=${PROJECT_ROOT}/doc/HANDOFF_UOM_PROJECT.md`
+- 下文再次提到文件时，默认使用相对路径，或写作 ``${PROJECT_ROOT}/相对路径``
 
 这份 `SKILL.md` 只负责告诉 AI：
 - 先看哪些文件
@@ -17,21 +20,21 @@ tags: [uom, drone, automation, caac, 无人机, 飞行申请]
 - 哪些细节不要写回 skill，而应去看交接文档
 
 详细背景、历史坑点、技术结论、调试经验，统一看：
-- `~/hermes_interface/uom-automation/doc/HANDOFF_UOM_PROJECT.md`
+- `doc/HANDOFF_UOM_PROJECT.md`
 
 不要在沙盒里运行，直接在系统中运行。不然会找不到环境。
 
 ## 优先阅读顺序
 
-1. `~/hermes_interface/uom-automation/SKILL.md`
-2. `~/hermes_interface/uom-automation/README.md`
-3. `~/hermes_interface/uom-automation/doc/HANDOFF_UOM_PROJECT.md`
+1. `SKILL.md`
+2. `README.md`
+3. `doc/HANDOFF_UOM_PROJECT.md`
 4. 需要实现或修改逻辑时，再读：
-   - `~/hermes_interface/uom-automation/core/uom_core.py`
-   - `~/hermes_interface/uom-automation/cli/uom_login.py`
-   - `~/hermes_interface/uom-automation/cli/uom_airspace_probe.py`
-   - `~/hermes_interface/uom-automation/cli/uom_submit_fly_plan.py`
-   - `~/hermes_interface/uom-automation/cli/uom_read_plan.py`
+   - `core/uom_core.py`
+   - `cli/uom_login.py`
+   - `cli/uom_airspace_probe.py`
+   - `cli/uom_submit_fly_plan.py`
+   - `cli/uom_read_plan.py`
 
 ## 当前入口脚本
 
@@ -259,5 +262,5 @@ AI 在需要改配置时，优先按职责修改：
 把这份 skill 当作"项目操作索引"，不要当作完整交接文档。
 
 详细说明以：
-`~/hermes_interface/uom-automation/doc/HANDOFF_UOM_PROJECT.md`
+`doc/HANDOFF_UOM_PROJECT.md`
 为准。
