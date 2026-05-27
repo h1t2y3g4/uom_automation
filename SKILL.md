@@ -90,7 +90,7 @@ python3 cli/uom_submit_fly_plan.py --use-submit-plan --dry-run
 
 用途：
 - 未登录时自动发送短信验证码登录主站
-- 读取最近飞行计划详情（默认 10 条）
+- 读取最近飞行计划详情（默认 20 条）
 - 保存为 JSON 文件（默认 `log/uom_recent_plan_details.json`）
 - 包含计划列表和详细信息（空域经纬度、无人机、操控员等）
 

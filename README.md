@@ -91,7 +91,7 @@ python3 cli/uom_airspace_probe.py query --polygon-wgs84 "..." --force-refresh
 ### `cli/` - CLI 脚本入口
 - `uom_login.py`: 登录/状态检查、打开浏览器
 - `uom_airspace_probe.py`: 空域页探测，以及基于官方适飞图层的多边形查询
-- `uom_read_plan.py`: 读取最近飞行计划详情（默认 10 条）
+- `uom_read_plan.py`: 读取最近飞行计划详情（默认 20 条）
 - `uom_submit_fly_plan.py`: 自动提交飞行计划
 
 ### `core/` - 核心模块

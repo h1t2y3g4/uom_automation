@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-uom_read_plan.py - 读取最近 5 条飞行计划详情并保存到文件
+uom_read_plan.py - 读取最近 20 条飞行计划详情并保存到文件
 
 职责：
 - 未登录时自动发送短信验证码登录主站
 - 自动进入一般飞行活动页面
-- 读取最近 5 条计划列表及详情
+- 读取最近 20 条计划列表及详情
 - 保存为本地 JSON 文件
 
 用法：
@@ -26,7 +26,7 @@ import core.uom_core as core
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(description='读取最近 5 条飞行计划详情并保存到文件')
+    parser = argparse.ArgumentParser(description='读取最近 20 条飞行计划详情并保存到文件')
     parser.add_argument('--output', default=str(core.DEFAULT_RECENT_PLAN_DETAILS_FILE), help='输出 JSON 文件路径')
     parser.add_argument('--headless', action='store_true', help='无头模式运行浏览器')
     return parser
@@ -44,7 +44,7 @@ def main(argv=None):
         print('进入 一般飞行活动 ...')
         core.open_fly_activity(page)
         core.time.sleep(6)
-        result, err = core.fetch_recent_plan_details(page, limit=10)
+        result, err = core.fetch_recent_plan_details(page, limit=20)
         if err:
             print('读取最近计划详情失败:')
             print(json.dumps(err, ensure_ascii=False, indent=2))
