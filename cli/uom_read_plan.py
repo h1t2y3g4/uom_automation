@@ -3,7 +3,7 @@
 uom_read_plan.py - 读取最近 5 条飞行计划详情并保存到文件
 
 职责：
-- 复用持久化浏览器登录态
+- 未登录时自动发送短信验证码登录主站
 - 自动进入一般飞行活动页面
 - 读取最近 5 条计划列表及详情
 - 保存为本地 JSON 文件
@@ -36,10 +36,11 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     playwright_handle, context, page = core.launch_context(headless=args.headless)
     try:
-        status = core.ensure_main_page(page)
+        login_flow = core.ensure_main_login_with_auto_sms(page)
+        status = login_flow.get('statusAfter') or {}
         print('主站状态:')
         print(json.dumps(status, ensure_ascii=False, indent=2))
-        core.require_reliable_main_login(status, context, '当前不在可靠的主站已登录状态，停止读取计划流程，避免在错误页面上继续执行。')
+        core.require_reliable_main_login(status, context, '当前不在可靠的主站已登录状态，自动登录后仍失败，停止读取计划流程。')
         print('进入 一般飞行活动 ...')
         core.open_fly_activity(page)
         core.time.sleep(6)

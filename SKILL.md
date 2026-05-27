@@ -23,6 +23,7 @@ tags: [uom, drone, automation, caac, 无人机, 飞行申请]
 - `doc/HANDOFF_UOM_PROJECT.md`
 
 不要在沙盒里运行，直接在系统中运行。不然会找不到环境。
+不要使用 `--headless` 模式，默认用有头浏览器。
 
 ## 优先阅读顺序
 
@@ -61,7 +62,7 @@ python3 cli/uom_login.py open-browser
 文件：`cli/uom_submit_fly_plan.py`
 
 用途：
-- 复用持久化浏览器登录态
+- 未登录时自动发送短信验证码登录主站
 - 自动进入一般飞行活动并打开新增页
 - 自动填入最近计划内容和目标时间
 - 自动触发提交并在提交后检查结果
@@ -88,6 +89,7 @@ python3 cli/uom_submit_fly_plan.py --use-submit-plan --dry-run
 文件：`cli/uom_read_plan.py`
 
 用途：
+- 未登录时自动发送短信验证码登录主站
 - 读取最近飞行计划详情（默认 10 条）
 - 保存为 JSON 文件（默认 `log/uom_recent_plan_details.json`）
 - 包含计划列表和详细信息（空域经纬度、无人机、操控员等）
@@ -185,6 +187,7 @@ AI 对用户的推荐输出格式：
 - `config/config.json`：主配置（认证、联系人、无人机、操控员、默认参数）
 - `config/airspace.json`：本地常用空域缓存；提交前按名称换算成经纬度
 - `config/submit_plan.json`：待提交批次列表；每项同时包含时间和空域描述
+- `config/sms_code.json`：短信验证码传递文件；脚本写 `sent_at`，AI 写 `code` + `filled_at`
 - `cache/airspace_query_cache.json`：空域多边形查询缓存；命中时不再打开网页
 
 AI 在需要改配置时，优先按职责修改：
@@ -251,8 +254,10 @@ AI 在需要改配置时，优先按职责修改：
 - 锁文件属于运行时产物，统一放在 `runtime/` 下；不要把它当项目源码文件处理
 - 需要改流程时，公共逻辑优先收敛到 `core/uom_core.py`
 - 需要背景和历史结论时，不要在 `SKILL.md` 里找长篇说明，直接看 `doc/HANDOFF_UOM_PROJECT.md`
-- 当前约定：短信验证码回填保持 `stdin` 模式；若 AI 代跑脚本并检测到 `input("请输入短信验证码")` 阻塞，应使用后台 `pty` 进程 + 轮询输出 + 回写 stdin 的方式继续，不要把这一段改成新的文件轮询方案
-- 当前约定：图形验证码默认直接使用 OCR 结果尝试发短信；若接口返回“短信验证码还在有效期内”，必须优先复用用户手上的上一条短信验证码继续登录，不要再次调用发送短信接口
+- 当前所有入口脚本（`uom_login.py`、`uom_submit_fly_plan.py`、`uom_read_plan.py`、`uom_airspace_probe.py`）在未登录时都会自动尝试短信验证码登录
+- 短信验证码通过 `config/sms_code.json` 文件传递：脚本发短信后写入 `sent_at`，AI 或人工写入 `code` 和 `filled_at`，脚本每秒轮询读取，10 分钟超时
+- 人工在终端运行时，也可直接在命令行输入验证码（stdin 非阻塞读取与文件轮询并行）
+- 图形验证码默认直接使用 OCR 结果尝试发短信；若接口返回"短信验证码还在有效期内"，脚本会跳过重复发送，等待文件中的验证码
 - 遇到新的空域申请任务，默认工作流是：先用高德地图定位地点并拿到经纬度，再计算待申请 polygon，然后用 `cli/uom_airspace_probe.py query` 查询是否适飞，最后再根据查询结果生成并提交申请
 - 默认高度策略：如果整块 polygon 都在适飞区（`inside_suitable`），默认按 500m 申请；如果哪怕只有一部分不在适飞区（如 `partial_overlap`、`outside_suitable`），默认按 120m 申请
 - 若适飞区查询结果仍是 `unknown` / `error` / `login_required`，不得跳过核验直接声称方案已定；应先补完查询或明确告知用户当前仍待核验

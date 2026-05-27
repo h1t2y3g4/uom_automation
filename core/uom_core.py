@@ -21,6 +21,8 @@ import hashlib
 import io
 import json
 import os
+import select
+import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -41,6 +43,7 @@ CONFIG_FILE = PROJECT_ROOT / "config" / "config.json"
 AIRSPACE_FILE = PROJECT_ROOT / "config" / "airspace.json"
 SUBMIT_PLAN_FILE = PROJECT_ROOT / "config" / "submit_plan.json"
 PERSIST_DIR = PROJECT_ROOT / ".playwright-uom-profile"
+SMS_CODE_FILE = PROJECT_ROOT / "config" / "sms_code.json"
 CAPTCHA_FILE = Path("/tmp/uom_persistent_captcha.png")
 BASE_URL = "https://uom.caac.gov.cn"
 MANUAL_SELECTION_LOG = PROJECT_ROOT / "log" / "manual_selection_log.json"
@@ -970,6 +973,74 @@ def load_phone():
     return phone
 
 
+def read_sms_code_file():
+    """读取 config/sms_code.json，文件不存在或异常时返回空结构。"""
+    try:
+        return json.loads(SMS_CODE_FILE.read_text(encoding='utf-8'))
+    except Exception:
+        return {'code': '', 'sent_at': '', 'filled_at': ''}
+
+
+def write_sms_code_file(data):
+    """写入 config/sms_code.json。"""
+    SMS_CODE_FILE.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2),
+        encoding='utf-8',
+    )
+
+
+def is_sms_sent_within_window(sent_at_str, window_seconds=600):
+    """判断 sent_at 是否在 window_seconds 秒内（默认 10 分钟）。"""
+    if not sent_at_str:
+        return False
+    try:
+        sent_dt = datetime.fromisoformat(sent_at_str)
+        return (datetime.now() - sent_dt).total_seconds() < window_seconds
+    except (ValueError, TypeError):
+        return False
+
+
+def wait_for_sms_code_from_file(timeout_s=600):
+    """
+    轮询 sms_code.json，每秒读一次。
+    当 filled_at 非空、在 sent_at 之后、且距 sent_at 不超过 10 分钟时，返回 code。
+    若 stdin 是终端（人工运行），同时监听 stdin，用户可直接输入验证码。
+    超时返回 None。
+    """
+    interactive = sys.stdin.isatty()
+    if interactive:
+        print('提示：你也可以直接在此处输入短信验证码并回车，或在 sms_code.json 中写入后自动读取。')
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        # 1. 检查文件
+        data = read_sms_code_file()
+        code = (data.get('code') or '').strip()
+        filled_at = (data.get('filled_at') or '').strip()
+        sent_at = (data.get('sent_at') or '').strip()
+        if code and filled_at and sent_at:
+            try:
+                sent_dt = datetime.fromisoformat(sent_at)
+                filled_dt = datetime.fromisoformat(filled_at)
+                if filled_dt >= sent_dt and (filled_dt - sent_dt).total_seconds() < 600:
+                    return code
+            except (ValueError, TypeError):
+                pass
+
+        # 2. 交互模式下非阻塞读 stdin
+        if interactive:
+            try:
+                rlist, _, _ = select.select([sys.stdin], [], [], 0)
+                if rlist:
+                    line = sys.stdin.readline().strip()
+                    if line:
+                        return line
+            except Exception:
+                pass
+
+        time.sleep(1)
+    return None
+
+
 def solve_captcha(image_path: str):
     try:
         import ddddocr
@@ -1126,6 +1197,28 @@ def fetch_login_captcha_with_ocr(page):
     }
 
 
+def fill_login_phone(page, phone):
+    """在登录页填入手机号（不发送短信）。"""
+    return page.evaluate(
+        """
+        ([phone]) => {
+            const app = document.querySelector('#app').__vue__;
+            function find(vm, d) {
+                if (d > 12) return null;
+                if (vm.$data && vm.$data.personnalUsername !== undefined && vm.$data.userForm) return vm;
+                for (const c of (vm.$children || [])) { const r = find(c, d + 1); if (r) return r; }
+                return null;
+            }
+            const lm = find(app, 0);
+            if (!lm) return {ok: false, error: '找不到登录组件'};
+            lm.$set(lm.userForm, 'telephone', phone);
+            return {ok: true};
+        }
+        """,
+        [phone],
+    )
+
+
 def request_login_sms(page, phone, captcha):
     return page.evaluate(
         """
@@ -1197,9 +1290,6 @@ def is_sms_still_valid_response(payload):
     return '短信验证码还在有效期内' in text
 
 
-def should_prompt_for_sms_in_interactive_mode():
-    return os.environ.get('UOM_SMS_CODE') is None
-
 
 def login_via_sms(page):
     phone = load_phone()
@@ -1213,44 +1303,63 @@ def login_via_sms(page):
     login_trace = {
         'usedOcrAsDefaultCaptcha': True,
         'captchaAttempts': [],
-        'smsCodeSource': 'env' if os.environ.get('UOM_SMS_CODE') else 'interactive',
+        'smsCodeSource': 'file',
         'waitedForSmsInput': False,
         'reusedExistingSmsCode': False,
     }
 
-    captcha_meta = fetch_login_captcha_with_ocr(page)
-    captcha = (captcha_meta.get('ocr') or '').strip()
-    if not captcha:
-        raise RuntimeError("OCR 未识别出图形验证码，当前流程已改为默认直接使用 OCR，不再阻塞等待手输图形验证码")
+    # ---- 始终填入手机号 ----
+    fill_result = fill_login_phone(page, phone)
+    print(f'填入手机号: {fill_result}')
 
-    sms_result = request_login_sms(page, phone, captcha)
-    login_trace['captchaAttempts'].append({
-        'captcha': captcha,
-        'uuid': captcha_meta.get('uuid'),
-        'ocr': captcha_meta.get('ocr'),
-        'smsResult': sms_result,
-    })
-    print("发短信返回:", sms_result)
+    # ---- 判断是否需要重新发送短信 ----
+    sms_file = read_sms_code_file()
+    skip_send = is_sms_sent_within_window(sms_file.get('sent_at', ''))
 
-    if not is_success_code(sms_result.get("code")):
-        if is_sms_still_valid_response(sms_result):
-            print('检测到短信验证码仍在有效期内：不会再次发送短信，后续将优先使用你手上的上一条短信验证码继续登录。')
-            login_trace['reusedExistingSmsCode'] = True
-        elif is_captcha_error_response(sms_result):
-            raise RuntimeError(
-                '本次发短信返回图形验证码错误。为避免重复发送短信导致限制，当前流程不会自动再次发短信。'
-                '请优先使用你手上上一次收到且仍在 10 分钟有效期内的短信验证码继续登录；'
-                '若你确认当前没有可复用短信码，再重新发起一次登录流程。'
-            )
+    if skip_send:
+        print('检测到 sms_code.json 中 sent_at 仍在 10 分钟有效期内，跳过重复发送')
+        login_trace['reusedExistingSmsCode'] = True
+    else:
+        captcha_meta = fetch_login_captcha_with_ocr(page)
+        captcha = (captcha_meta.get('ocr') or '').strip()
+        if not captcha:
+            raise RuntimeError("OCR 未识别出图形验证码")
+
+        sms_result = request_login_sms(page, phone, captcha)
+        login_trace['captchaAttempts'].append({
+            'captcha': captcha,
+            'uuid': captcha_meta.get('uuid'),
+            'ocr': captcha_meta.get('ocr'),
+            'smsResult': sms_result,
+        })
+        print("发短信返回:", sms_result)
+
+        if not is_success_code(sms_result.get("code")):
+            if is_sms_still_valid_response(sms_result):
+                print('服务器返回：短信验证码仍在有效期内，不更新 sent_at，等待原有验证码写入。')
+                login_trace['reusedExistingSmsCode'] = True
+                # 不更新 sent_at，因为没有新短信发出，保留原发送时间
+            elif is_captcha_error_response(sms_result):
+                raise RuntimeError(
+                    '本次发短信返回图形验证码错误。为避免重复发送短信导致限制，当前流程不会自动再次发短信。'
+                    '请更新 sms_code.json 中的验证码后重新发起登录。'
+                )
+            else:
+                raise RuntimeError(f"短信发送失败: {sms_result}")
         else:
-            raise RuntimeError(f"短信发送失败: {sms_result}")
+            # 发送成功，记录 sent_at
+            write_sms_code_file({
+                'code': '',
+                'sent_at': datetime.now().isoformat(),
+                'filled_at': '',
+            })
+            print(f'短信已发送，请在 {SMS_CODE_FILE} 中写入验证码')
 
-    sms = os.environ.get('UOM_SMS_CODE', '').strip()
-    if should_prompt_for_sms_in_interactive_mode():
-        login_trace['waitedForSmsInput'] = True
-        sms = input("请输入短信验证码: ").strip()
+    # ---- 等待文件中的验证码 ----
+    print('等待短信验证码写入 sms_code.json（每秒轮询，10 分钟超时）...')
+    sms = wait_for_sms_code_from_file(timeout_s=600)
     if not sms:
-        raise RuntimeError("短信验证码为空")
+        raise RuntimeError("等待短信验证码超时（10 分钟），登录中止")
 
     submit_result = submit_login_sms_code(page, sms)
     if not submit_result.get("ok"):

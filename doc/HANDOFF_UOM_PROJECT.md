@@ -197,9 +197,15 @@ deviceType: PC
 
 补充约定（2026-05）：
 - 图形验证码默认直接使用 OCR 结果发起这一次 `sendSmsCode`
-- 若接口返回“短信验证码还在有效期内”，不要再次调用 `sendSmsCode`
+- 若接口返回"短信验证码还在有效期内"，不要再次调用 `sendSmsCode`
 - 此时应优先复用用户手上上一条仍在 10 分钟有效期内的短信验证码继续登录
-- 若 AI 代跑脚本并阻塞在 `input("请输入短信验证码")`，当前约定仍是保留 `stdin` 回填模式：应以后台 `pty` 进程运行，轮询输出，在拿到用户回复后通过 stdin 回写验证码，不要另起文件轮询的新方案
+- 短信验证码通过 `config/sms_code.json` 文件传递，不再使用 `input()` 阻塞或 `UOM_SMS_CODE` 环境变量
+- 文件结构：`{ "code": "", "sent_at": "", "filled_at": "" }`
+- 脚本发短信后写入 `sent_at`（ISO 格式）；AI 或人工写入 `code` 和 `filled_at`
+- 脚本每秒轮询文件，当 `filled_at >= sent_at` 且距 `sent_at` 不超过 10 分钟时接受验证码
+- 若文件中 `sent_at` 仍在 10 分钟有效期内，脚本跳过重复发送
+- 人工在终端运行时，也可直接输入验证码（stdin 非阻塞读取与文件轮询并行）
+- 等待验证码超时时间为 10 分钟
 
 ### 4.5 新增页提交链路虽已打通，但不要因此删除调试意识
 
@@ -369,7 +375,7 @@ python3 cli/uom_airspace_probe.py query --polygon-wgs84 "..." --force-refresh
 
 ### 5.5 持久化浏览器目录
 
-`PROFILE_DIR`
+`.playwright-uom-profile`
 
 非常重要。
 这是当前复用登录态的核心资产，不要随意删除。

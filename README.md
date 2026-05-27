@@ -18,7 +18,8 @@
 ├── config/                 # 配置文件
 │   ├── config.json         # 主配置文件
 │   ├── airspace.json       # 本地常用空域缓存
-│   └── submit_plan.json    # 待提交计划列表
+│   ├── submit_plan.json    # 待提交计划列表
+│   └── sms_code.json       # 短信验证码传递文件
 ├── core/                   # 核心模块
 │   └── uom_core.py         # 底层公共能力
 ├── doc/                    # 文档
@@ -111,6 +112,7 @@ python3 cli/uom_airspace_probe.py query --polygon-wgs84 "..." --force-refresh
 - `config.json`: 主配置文件（认证、联系人、无人机、操控员、默认参数）
 - `airspace.json`: 本地常用空域缓存，按名称提供经纬度
 - `submit_plan.json`: 待提交计划列表，AI 批量提交默认优先改这个文件
+- `sms_code.json`: 短信验证码传递文件，脚本写 `sent_at`，AI/人工写 `code` + `filled_at`
 
 ### `cache/` - 运行时缓存
 - `airspace_query_cache.json`: 空域多边形查询缓存；命中缓存时不会再次打开网页
