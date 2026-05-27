@@ -27,6 +27,8 @@
 ├── log/                    # 日志和输出文件
 │   ├── manual_selection_log.json
 │   └── uom_recent_plan_details.json
+├── tools/                  # 工具脚本
+│   └── fix_path.sh         # 自动更新文档中的项目根目录路径
 ├── .gitignore
 ├── README.md
 └── SKILL.md                # AI 操作索引
@@ -77,7 +79,22 @@ python3 cli/uom_airspace_probe.py query --polygon-wgs84 "..." --force-refresh
 - `query` 是正式给 AI / 脚本调用的空域查询入口
 - `query` 会优先复用登录态；真掉线时会沿用现有自动短信登录
 - 同一块多边形再次查询时，默认优先命中 `cache/airspace_query_cache.json`
-- 当前返回的是“与适飞空域图层的覆盖关系”，不是最终审批结论
+- 当前返回的是”与适飞空域图层的覆盖关系”，不是最终审批结论
+
+更新项目根目录路径：
+
+```bash
+bash tools/fix_path.sh
+```
+
+说明：
+- 文档中的 `PROJECT_ROOT` 路径是硬编码的，换机器或换目录后需要更新
+- 该脚本自动检测当前项目根目录并更新 `SKILL.md`、`README.md`、`doc/HANDOFF_UOM_PROJECT.md` 中的路径
+- 以下情况需要运行：
+  - 在新机器上 clone 项目后
+  - 项目目录移动或重命名后
+  - 拉取了其他机器的提交后（路径可能不同）
+- 脚本幂等，多次运行结果一致
 
 ## 当前主路径约定
 

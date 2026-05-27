@@ -395,6 +395,13 @@ python3 cli/uom_airspace_probe.py query --polygon-wgs84 "..." --force-refresh
   - 项目入口说明，偏快速导航
 - `SKILL.md`
   - 给 AI 用的调用索引，只保留入口、命令、配置修改方式
+- `tools/fix_path.sh`
+  - 自动更新文档中的 `PROJECT_ROOT` 路径
+  - 文档中的路径是硬编码的，换机器或换目录后需要运行此脚本
+  - 使用方式：`bash tools/fix_path.sh`
+  - 自动检测当前项目根目录，更新 `SKILL.md`、`README.md`、`doc/HANDOFF_UOM_PROJECT.md`
+  - 以下情况需要运行：新机器 clone 后、项目目录移动/重命名后、拉取其他机器提交后
+  - 脚本幂等，多次运行结果一致
 
 ### 5.7 临时调试脚本约定
 
