@@ -1,0 +1,15 @@
+{
+  "_说明": "三江公园每周空域申请模板 - 由 uom_scheduler 自动生成",
+  "_使用说明": "每周日上午11点，调度器会自动更新日期并复制到 submit_plan.json",
+  "timezone": "UTC+8",
+  "_template": {
+    "planBeg_suffix": " 17:50:00",
+    "planEnd_suffix": " 19:00:00",
+    "airspace": {
+      "type": "common_ref",
+      "name": "三江公园"
+    },
+    "spcTop": 120
+  },
+  "plans": []
+}
