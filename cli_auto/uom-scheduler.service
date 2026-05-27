@@ -9,8 +9,8 @@ WorkingDirectory=/home/skye/csy/uom_automation
 ExecStart=/usr/bin/python3 /home/skye/csy/uom_automation/cli_auto/uom_scheduler.py
 Restart=always
 RestartSec=10
-StandardOutput=append:/home/skye/csy/uom_automation/log/uom_scheduler.log
-StandardError=append:/home/skye/csy/uom_automation/log/uom_scheduler.log
+StandardOutput=file:/home/skye/csy/uom_automation/log/uom_scheduler.log
+StandardError=file:/home/skye/csy/uom_automation/log/uom_scheduler.log
 
 [Install]
 WantedBy=multi-user.target
