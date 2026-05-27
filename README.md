@@ -1,7 +1,7 @@
 # UOM 自动化项目
 
 路径变量约定：
-- `PROJECT_ROOT=/home/skye/hermes_interface/uom-automation`
+- `PROJECT_ROOT=/home/skye/csy/uom_automation`
 - 下文再次提到文件时，默认使用相对路径，或写作 ``${PROJECT_ROOT}/相对路径``
 
 ## 目录结构

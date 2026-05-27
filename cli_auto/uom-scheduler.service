@@ -5,12 +5,12 @@ After=network.target
 [Service]
 Type=simple
 User=skye
-WorkingDirectory=/home/skye/hermes_interface/uom-automation
-ExecStart=/usr/bin/python3 /home/skye/hermes_interface/uom-automation/cli_auto/uom_scheduler.py
+WorkingDirectory=/home/skye/csy/uom_automation
+ExecStart=/usr/bin/python3 /home/skye/csy/uom_automation/cli_auto/uom_scheduler.py
 Restart=always
 RestartSec=10
-StandardOutput=append:/home/skye/hermes_interface/uom-automation/log/uom_scheduler.log
-StandardError=append:/home/skye/hermes_interface/uom-automation/log/uom_scheduler.log
+StandardOutput=append:/home/skye/csy/uom_automation/log/uom_scheduler.log
+StandardError=append:/home/skye/csy/uom_automation/log/uom_scheduler.log
 
 [Install]
 WantedBy=multi-user.target

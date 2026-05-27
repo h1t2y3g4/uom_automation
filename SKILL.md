@@ -7,7 +7,7 @@ tags: [uom, drone, automation, caac, 无人机, 飞行申请]
 # UOM 自动化项目操作索引
 
 路径变量约定：
-- `PROJECT_ROOT=/home/skye/hermes_interface/uom-automation`
+- `PROJECT_ROOT=/home/skye/csy/uom_automation`
 - `HANDOFF_DOC=${PROJECT_ROOT}/doc/HANDOFF_UOM_PROJECT.md`
 - 下文再次提到文件时，默认使用相对路径，或写作 ``${PROJECT_ROOT}/相对路径``
 

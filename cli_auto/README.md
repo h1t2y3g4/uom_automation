@@ -19,7 +19,7 @@
 ### 手动运行
 
 ```bash
-cd /home/skye/hermes_interface/uom-automation
+cd /home/skye/csy/uom_automation
 python3 cli_auto/uom_scheduler.py
 ```
 
