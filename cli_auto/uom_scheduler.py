@@ -172,7 +172,7 @@ class UOMScheduler:
     def _run_cli_script(self, script_name, args=None, timeout=600):
         """运行 CLI 脚本（后台，等待完成）"""
         script_path = CLI_DIR / script_name
-        cmd = [sys.executable, str(script_path)]
+        cmd = [sys.executable, str(script_path), "--headless"]
         if args:
             cmd.extend(args)
 
@@ -307,6 +307,7 @@ class UOMScheduler:
             }
         }
 
+
     def _task_submit_weekly_plan(self):
         """任务：提交下周三江公园空域申请"""
         logger.info("=" * 40)
@@ -368,19 +369,9 @@ class UOMScheduler:
         logger.info("开始执行：检查计划并调度起飞确认")
         logger.info("=" * 40)
 
-        # 先读取最新计划
-        success = self._run_cli_script(
-            "uom_read_plan.py",
-            timeout=300
-        )
-
-        if not success:
-            logger.error("读取计划失败")
-            return
-
-        # 读取计划文件
+        # 直接读取本地计划文件（不登录，不调脚本）
         if not PLAN_DETAILS_FILE.exists():
-            logger.warning("计划详情文件不存在")
+            logger.warning("计划详情文件不存在，跳过")
             return
 
         try:
@@ -442,11 +433,6 @@ class UOMScheduler:
             return
 
         try:
-            # 检查文件修改时间，如果超过1小时则跳过（等待凌晨4点更新）
-            mtime = datetime.fromtimestamp(PLAN_DETAILS_FILE.stat().st_mtime)
-            if (datetime.now() - mtime).total_seconds() > 3600:
-                return
-
             with open(PLAN_DETAILS_FILE, 'r', encoding='utf-8') as f:
                 plan_data = json.load(f)
 
@@ -498,12 +484,6 @@ class UOMScheduler:
             logger.info("起飞确认提交成功")
         else:
             logger.error("起飞确认提交失败")
-
-        # 提交后重新读取计划，更新本地缓存
-        self._run_cli_script(
-            "uom_read_plan.py",
-            timeout=300
-        )
 
 
 def main():
