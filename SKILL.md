@@ -51,11 +51,11 @@ tags: [uom, drone, automation, caac, 无人机, 飞行申请]
 
 常用命令：
 ```bash
-python3 cli/uom_login.py status
-python3 cli/uom_login.py login
-python3 cli/uom_login.py ensure-fly
-python3 cli/uom_login.py latest-plan
-python3 cli/uom_login.py open-browser
+python3 cli/uom_login.py status          # 检查登录态
+python3 cli/uom_login.py login           # 走短信登录
+python3 cli/uom_login.py ensure-fly      # 确保进入一般飞行活动
+python3 cli/uom_login.py latest-plan     # 读取最近计划
+python3 cli/uom_login.py open-browser    # 打开持久化浏览器供人工检查
 ```
 
 ### 2. 自动提交飞行计划入口
@@ -70,12 +70,11 @@ python3 cli/uom_login.py open-browser
 
 常用命令：
 ```bash
-python3 cli/uom_submit_fly_plan.py
-python3 cli/uom_submit_fly_plan.py --start-utc-ts 1747908000 --end-utc-ts 1747911600
-python3 cli/uom_submit_fly_plan.py --use-submit-plan
-python3 cli/uom_submit_fly_plan.py --use-time-list
-python3 cli/uom_submit_fly_plan.py --dry-run
-python3 cli/uom_submit_fly_plan.py --use-submit-plan --dry-run
+python3 cli/uom_submit_fly_plan.py                                          # 默认使用 submit_plan.json
+python3 cli/uom_submit_fly_plan.py --use-submit-plan                        # 显式使用 submit_plan.json
+python3 cli/uom_submit_fly_plan.py --start-utc-ts 1747908000 --end-utc-ts 1747911600  # 直接传 UTC 时间戳
+python3 cli/uom_submit_fly_plan.py --dry-run                                # 只做预演，不真正提交
+python3 cli/uom_submit_fly_plan.py --use-submit-plan --dry-run              # 预演 + submit_plan.json
 ```
 
 说明：
@@ -96,9 +95,9 @@ python3 cli/uom_submit_fly_plan.py --use-submit-plan --dry-run
 
 常用命令：
 ```bash
-python3 cli/uom_read_plan.py
-python3 cli/uom_read_plan.py --output /path/to/output.json
-python3 cli/uom_read_plan.py --headless
+python3 cli/uom_read_plan.py                           # 默认读取 20 条
+python3 cli/uom_read_plan.py --output /path/to.json    # 指定输出路径
+python3 cli/uom_read_plan.py --headless                # 无头模式（仅此脚本可用）
 ```
 
 ### 4. 空域多边形查询入口
@@ -111,10 +110,9 @@ python3 cli/uom_read_plan.py --headless
 
 常用命令：
 ```bash
-python3 cli/uom_airspace_probe.py
-python3 cli/uom_airspace_probe.py probe --headless
+python3 cli/uom_airspace_probe.py          # probe：调试页面状态
 python3 cli/uom_airspace_probe.py query --polygon-wgs84 "104.01902676,30.52132641|104.01574373,30.51483813|104.02269602,30.51310046|104.02413368,30.51722276"
-python3 cli/uom_airspace_probe.py query --polygon-wgs84 "..." --force-refresh
+python3 cli/uom_airspace_probe.py query --polygon-wgs84 "..." --force-refresh   # 强制重新查网页
 ```
 
 返回结果约定：
@@ -171,24 +169,6 @@ AI 对用户的推荐输出格式：
 - 当前结论表示这块区域与“适飞空域”图层没有重叠
 - 这不是最终审批结论，只是图层覆盖关系判断
 ```
-
-### 5. 底层公共能力
-文件：`core/uom_core.py`（re-export 外观模块）
-
-用途：
-- 保持 `import core.uom_core as core` 的向后兼容
-- 实际功能已拆分到以下 10 个子模块：
-  - `core/constants.py`：路径常量、URL
-  - `core/time_utils.py`：时间/日期工具
-  - `core/config.py`：配置加载、JSON 工具
-  - `core/airspace_data.py`：空域数据解析/规范化
-  - `core/airspace_query.py`：空域在线查询、缓存
-  - `core/auth.py`：登录认证
-  - `core/ui_helpers.py`：浏览器 UI 交互
-  - `core/fly_plan.py`：飞行计划表单操作
-  - `core/takeoff.py`：起飞确认
-  - `core/context.py`：浏览器上下文管理
-- 涉及登录态判断、业务页进入、读取最近计划、打开新增页、填表、提交等底层能力时，优先在对应子模块中改
 
 ## 配置文件
 
@@ -259,7 +239,6 @@ AI 在需要改配置时，优先按职责修改：
 
 ## 当前执行约束
 
-- 不要回退到旧的纯 API / RSAL 主线
 - 优先复用持久化浏览器 profile，减少短信登录
 - 当前 `.playwright-uom-profile` 已加单实例锁；同一时刻只能有一个 UOM 脚本占用它，若锁冲突应先结束另一条在跑的 UOM 命令
 - 锁文件属于运行时产物，统一放在 `runtime/` 下；不要把它当项目源码文件处理
