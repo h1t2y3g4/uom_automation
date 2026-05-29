@@ -21,7 +21,18 @@
 │   ├── submit_plan.json    # 待提交计划列表
 │   └── sms_code.json       # 短信验证码传递文件
 ├── core/                   # 核心模块
-│   └── uom_core.py         # 底层公共能力
+│   ├── uom_core.py         # re-export 外观模块（向后兼容）
+│   ├── constants.py        # 路径常量、URL
+│   ├── time_utils.py       # 时间/日期工具
+│   ├── config.py           # 配置加载、JSON 工具
+│   ├── airspace_data.py    # 空域数据解析/规范化
+│   ├── airspace_query.py   # 空域在线查询、缓存
+│   ├── auth.py             # 登录认证
+│   ├── ui_helpers.py       # 浏览器 UI 交互
+│   ├── fly_plan.py         # 飞行计划表单操作
+│   ├── takeoff.py          # 起飞确认
+│   ├── context.py          # 浏览器上下文管理
+│   └── qq_code_receiver.py # QQ 机器人验证码接收
 ├── doc/                    # 文档
 │   └── HANDOFF_UOM_PROJECT.md  # 项目交接文档
 ├── log/                    # 日志和输出文件
@@ -112,18 +123,19 @@ bash tools/fix_path.sh
 - `uom_submit_fly_plan.py`: 自动提交飞行计划
 
 ### `core/` - 核心模块
-- `uom_core.py`: 底层公共能力，包括：
-  - 配置读取
-  - 持久化浏览器启动/关闭
-  - 主站登录态判断
-  - 短信登录
-  - 菜单定位与进入 `一般飞行活动`
-  - iframe 认证提取
-  - oapi 检查
-  - 最近计划 / 详情读取
-  - 打开新增页
-  - 自动填表
-  - 表单快照 / 探测 / 提交等辅助函数
+- `uom_core.py`: re-export 外观模块，保持 `import core.uom_core as core` 的向后兼容
+- 实际功能已拆分为 10 个子模块：
+  - `constants.py`: 路径常量、URL
+  - `time_utils.py`: 时间/日期工具
+  - `config.py`: 配置加载、JSON 工具
+  - `airspace_data.py`: 空域数据解析/规范化
+  - `airspace_query.py`: 空域在线查询、缓存
+  - `auth.py`: 登录认证（SMS、验证码）
+  - `ui_helpers.py`: 浏览器 UI 交互
+  - `fly_plan.py`: 飞行计划表单操作
+  - `takeoff.py`: 起飞确认
+  - `context.py`: 浏览器上下文管理
+- `qq_code_receiver.py`: QQ 机器人验证码接收功能
 
 ### `config/` - 配置文件
 - `config.json`: 主配置文件（认证、联系人、无人机、操控员、默认参数）
@@ -150,8 +162,8 @@ bash tools/fix_path.sh
 
 1. `doc/HANDOFF_UOM_PROJECT.md`
    - 当前完整交接文档
-2. `core/uom_core.py`
-   - 当前底层能力实现
+2. `core/` 子模块
+   - 当前底层能力实现（`auth.py`、`fly_plan.py`、`ui_helpers.py` 等）
 3. `cli/uom_login.py`
    - 登录/状态入口
 4. `cli/uom_submit_fly_plan.py`

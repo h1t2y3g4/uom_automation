@@ -241,24 +241,26 @@ deviceType: PC
 
 ### 5.1 底层能力
 
-#### `uom_core.py`
-当前公共底层能力文件。
+#### `uom_core.py`（re-export 外观模块）
+当前公共底层能力文件，已拆分为 10 个子模块。
 
 职责：
-- 配置读取
-- 持久化浏览器启动/关闭
-- 主站登录态判断
-- 短信登录
-- 菜单定位与进入 `一般飞行活动`
-- iframe 认证提取
-- oapi 检查
-- 最近计划 / 详情读取
-- 打开新增页
-- 自动填表
-- 表单快照 / 探测 / 提交等辅助函数
+- 保持 `import core.uom_core as core` 的向后兼容
+- 实际功能已拆分到以下子模块：
+  - `core/constants.py`：路径常量、URL
+  - `core/time_utils.py`：时间/日期工具
+  - `core/config.py`：配置加载、JSON 工具
+  - `core/airspace_data.py`：空域数据解析/规范化
+  - `core/airspace_query.py`：空域在线查询、缓存
+  - `core/auth.py`：登录认证（SMS、验证码）
+  - `core/ui_helpers.py`：浏览器 UI 交互
+  - `core/fly_plan.py`：飞行计划表单操作
+  - `core/takeoff.py`：起飞确认
+  - `core/context.py`：浏览器上下文管理
+- `core/qq_code_receiver.py`：QQ 机器人验证码接收功能
 
 重要原则：
-- 公共逻辑应尽量回到这里
+- 公共逻辑应尽量回到对应子模块
 - 不要在上层流程脚本里重复复制底层实现
 
 ### 5.2 登录/状态入口
@@ -547,7 +549,7 @@ python3 cli/uom_airspace_probe.py query --polygon-wgs84 "..." --force-refresh
 1. 先看 `README.md`
 2. 再看 `SKILL.md`
 3. 需要完整背景时看 `HANDOFF_UOM_PROJECT.md`
-4. 需要改底层逻辑时读 `uom_core.py`
+4. 需要改底层逻辑时读对应子模块（如 `core/auth.py`、`core/fly_plan.py` 等）
 5. 需要改登录入口时读 `uom_login.py`
 6. 需要改自动提交流程时读 `uom_submit_fly_plan.py`
 7. 如果真实站点行为异常，再按当时问题临时创建新的调试脚本
@@ -579,7 +581,7 @@ python3 cli/uom_airspace_probe.py query --polygon-wgs84 "..." --force-refresh
   - 保留完整背景、历史结论、技术细节、架构演化与调试约定
 
 当前主线脚本是：
-- `uom_core.py`
+- `core/` 子模块（`auth.py`、`fly_plan.py`、`ui_helpers.py` 等）
 - `uom_login.py`
 - `uom_submit_fly_plan.py`
 

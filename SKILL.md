@@ -173,11 +173,22 @@ AI 对用户的推荐输出格式：
 ```
 
 ### 5. 底层公共能力
-文件：`core/uom_core.py`
+文件：`core/uom_core.py`（re-export 外观模块）
 
 用途：
-- 放公共函数，不作为主要人类入口文档
-- 涉及登录态判断、业务页进入、读取最近计划、打开新增页、填表、提交等底层能力时，优先在这里改
+- 保持 `import core.uom_core as core` 的向后兼容
+- 实际功能已拆分到以下 10 个子模块：
+  - `core/constants.py`：路径常量、URL
+  - `core/time_utils.py`：时间/日期工具
+  - `core/config.py`：配置加载、JSON 工具
+  - `core/airspace_data.py`：空域数据解析/规范化
+  - `core/airspace_query.py`：空域在线查询、缓存
+  - `core/auth.py`：登录认证
+  - `core/ui_helpers.py`：浏览器 UI 交互
+  - `core/fly_plan.py`：飞行计划表单操作
+  - `core/takeoff.py`：起飞确认
+  - `core/context.py`：浏览器上下文管理
+- 涉及登录态判断、业务页进入、读取最近计划、打开新增页、填表、提交等底层能力时，优先在对应子模块中改
 
 ## 配置文件
 
@@ -252,7 +263,7 @@ AI 在需要改配置时，优先按职责修改：
 - 优先复用持久化浏览器 profile，减少短信登录
 - 当前 `.playwright-uom-profile` 已加单实例锁；同一时刻只能有一个 UOM 脚本占用它，若锁冲突应先结束另一条在跑的 UOM 命令
 - 锁文件属于运行时产物，统一放在 `runtime/` 下；不要把它当项目源码文件处理
-- 需要改流程时，公共逻辑优先收敛到 `core/uom_core.py`
+- 需要改流程时，公共逻辑优先收敛到对应子模块（如 `core/auth.py`、`core/fly_plan.py` 等）
 - 需要背景和历史结论时，不要在 `SKILL.md` 里找长篇说明，直接看 `doc/HANDOFF_UOM_PROJECT.md`
 - 当前所有入口脚本（`uom_login.py`、`uom_submit_fly_plan.py`、`uom_read_plan.py`、`uom_airspace_probe.py`）在未登录时都会自动尝试短信验证码登录
 - 短信验证码通过 `config/sms_code.json` 文件传递：脚本发短信后写入 `sent_at`，AI 或人工写入 `code` 和 `filled_at`，脚本每秒轮询读取，10 分钟超时
