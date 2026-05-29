@@ -12,12 +12,15 @@ import asyncio
 import logging
 import threading
 from datetime import datetime
+from pathlib import Path
 
 import botpy
 from botpy.message import C2CMessage
 
-from core.constants import SMS_CODE_FILE
+from core.constants import SMS_CODE_FILE, PROJECT_ROOT
 from core.config import read_sms_code_file
+
+BOTPY_LOG = PROJECT_ROOT / "log" / "botpy.log"
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +134,16 @@ class QQCodeReceiver:
             direct_message=True,
             public_messages=True  # 启用 C2C/群公域消息事件
         )
-        self._client = CodeReceiverClient(intents=intents)
+
+        self._client = CodeReceiverClient(intents=intents, bot_log=None)
+
+        # 在 bot_log=None 清空 handler 后，重新配置 botpy 日志
+        botpy_logger = logging.getLogger("botpy")
+        botpy_logger.setLevel(logging.INFO)
+        botpy_logger.propagate = False  # 不传播到 root logger
+        file_handler = logging.FileHandler(str(BOTPY_LOG), mode="w", encoding="utf-8")
+        file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+        botpy_logger.addHandler(file_handler)
 
         try:
             await self._client.start(appid=self.appid, secret=self.secret)
