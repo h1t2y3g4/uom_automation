@@ -18,6 +18,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from queue import Queue, Empty
 
+# 添加项目根目录到 Python 路径
+PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+sys.path.insert(0, str(PROJECT_ROOT))
+
 # 项目根目录
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 CLI_DIR = PROJECT_ROOT / "cli"
@@ -92,6 +96,7 @@ class UOMScheduler:
         self.task_queue = TaskQueue()
         self._stop_event = threading.Event()
         self._scheduler_thread = None
+        self._qq_receiver = None
 
     def start(self):
         """启动调度器"""
@@ -106,6 +111,9 @@ class UOMScheduler:
 
         # 启动任务队列
         self.task_queue.start()
+
+        # 启动 QQ 验证码接收器
+        self._start_qq_receiver()
 
         # 启动调度线程
         self._scheduler_thread = threading.Thread(target=self._scheduler_loop, daemon=True)
@@ -124,8 +132,43 @@ class UOMScheduler:
         """停止调度器"""
         logger.info("正在停止调度器...")
         self._stop_event.set()
+
+        # 停止 QQ Bot
+        if self._qq_receiver:
+            self._qq_receiver.stop()
+
         self.task_queue.stop()
         logger.info("调度器已停止")
+
+    def _start_qq_receiver(self):
+        """启动 QQ 验证码接收器"""
+        try:
+            # 动态导入，避免未配置时也要求安装 botpy
+            from core.config import load_config
+            from core.qq_code_receiver import QQCodeReceiver
+
+            config = load_config()
+            qq_cfg = config.get('qq_bot', {})
+
+            if not qq_cfg.get('enabled'):
+                logger.info("QQ Bot 未启用（config.json 中 qq_bot.enabled=false），跳过")
+                return
+
+            appid = qq_cfg.get('appid', '')
+            secret = qq_cfg.get('secret', '')
+
+            if not appid or not secret:
+                logger.warning("QQ Bot 配置不完整（缺少 appid 或 secret），跳过")
+                return
+
+            self._qq_receiver = QQCodeReceiver(appid=appid, secret=secret)
+            self._qq_receiver.start()
+            logger.info("QQ 验证码接收器已启动")
+
+        except ImportError as e:
+            logger.warning(f"缺少 botpy 依赖，QQ Bot 未启动: {e}")
+        except Exception as e:
+            logger.error(f"启动 QQ Bot 失败: {e}", exc_info=True)
 
     def _signal_handler(self, signum, frame):
         """信号处理"""
