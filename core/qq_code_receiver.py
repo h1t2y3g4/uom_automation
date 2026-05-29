@@ -14,7 +14,7 @@ import threading
 from datetime import datetime
 
 import botpy
-from botpy.message import DirectMessage
+from botpy.message import C2CMessage
 
 from core.constants import SMS_CODE_FILE
 from core.config import read_sms_code_file
@@ -28,14 +28,15 @@ class CodeReceiverClient(botpy.Client):
     async def on_ready(self):
         logger.info(f"QQ Bot 「{self.robot.name}」 已连接")
 
-    async def on_direct_message_create(self, message: DirectMessage):
-        """处理私信消息"""
+    async def on_c2c_message_create(self, message: C2CMessage):
+        """处理 C2C 私信消息"""
         content = message.content.strip()
         logger.info(f"收到私信: {content}")
 
         # 判断是否为 6 位数字验证码
         if not re.match(r'^\d{6}$', content):
             logger.debug(f"忽略非验证码消息: {content}")
+            await message.reply(content=f"❌ 请输入6位数字验证码，收到的是: {content}")
             return
 
         # 读取当前 sms_code.json，保持 sent_at 不变
@@ -66,6 +67,10 @@ class CodeReceiverClient(botpy.Client):
             except Exception:
                 pass
 
+    async def on_event(self, event_type, event_data):
+        """调试：记录所有收到的事件"""
+        logger.debug(f"收到事件: {event_type}")
+
 
 class QQCodeReceiver:
     """QQ 验证码接收器 - 在后台线程中运行 botpy"""
@@ -92,17 +97,19 @@ class QQCodeReceiver:
     def stop(self):
         """停止 QQ Bot"""
         self._running = False
-        if self._loop and self._loop.is_running():
-            # 在事件循环中安排关闭
-            asyncio.run_coroutine_threadsafe(self._shutdown(), self._loop)
-        if self._thread:
-            self._thread.join(timeout=5)
-        logger.info("QQ Bot 已停止")
 
-    async def _shutdown(self):
-        """优雅关闭 botpy 客户端"""
-        if self._client:
-            await self._client.close()
+        if self._loop and self._loop.is_running():
+            # 取消所有 asyncio 任务
+            for task in asyncio.all_tasks(self._loop):
+                task.cancel()
+
+            # 停止事件循环
+            self._loop.call_soon_threadsafe(self._loop.stop)
+
+        if self._thread:
+            self._thread.join(timeout=2)  # 缩短超时到 2 秒
+
+        logger.info("QQ Bot 已停止")
 
     def _run_loop(self):
         """在新线程中运行 asyncio 事件循环"""
@@ -119,7 +126,11 @@ class QQCodeReceiver:
 
     async def _run_bot(self):
         """运行 botpy 客户端"""
-        intents = botpy.Intents(direct_message=True)
+        intents = botpy.Intents(
+            public_guild_messages=True,
+            direct_message=True,
+            public_messages=True  # 启用 C2C/群公域消息事件
+        )
         self._client = CodeReceiverClient(intents=intents)
 
         try:

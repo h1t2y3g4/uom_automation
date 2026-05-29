@@ -97,6 +97,7 @@ class UOMScheduler:
         self._stop_event = threading.Event()
         self._scheduler_thread = None
         self._qq_receiver = None
+        self._stopping = False  # 防止重复停止
 
     def start(self):
         """启动调度器"""
@@ -130,6 +131,10 @@ class UOMScheduler:
 
     def stop(self):
         """停止调度器"""
+        if self._stopping:
+            return
+        self._stopping = True
+
         logger.info("正在停止调度器...")
         self._stop_event.set()
 
