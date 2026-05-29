@@ -1182,7 +1182,8 @@ def get_login_captcha(page):
 
 
 def is_success_code(code):
-    return str(code) in ["0", "1"]
+    """只有 code=0 才算真正的发送成功。code=1 表示有其他信息（如验证码还在有效期），不算成功。"""
+    return str(code) == "0"
 
 
 def fetch_login_captcha_with_ocr(page):
@@ -1334,26 +1335,34 @@ def login_via_sms(page):
         })
         print("发短信返回:", sms_result)
 
-        if not is_success_code(sms_result.get("code")):
-            if is_sms_still_valid_response(sms_result):
-                print('服务器返回：短信验证码仍在有效期内，不更新 sent_at，等待原有验证码写入。')
-                login_trace['reusedExistingSmsCode'] = True
-                # 不更新 sent_at，因为没有新短信发出，保留原发送时间
-            elif is_captcha_error_response(sms_result):
-                raise RuntimeError(
-                    '本次发短信返回图形验证码错误。为避免重复发送短信导致限制，当前流程不会自动再次发短信。'
-                    '请更新 sms_code.json 中的验证码后重新发起登录。'
-                )
-            else:
-                raise RuntimeError(f"短信发送失败: {sms_result}")
-        else:
-            # 发送成功，记录 sent_at
+        resp_code = str(sms_result.get("code", ""))
+        if resp_code == "0":
+            # code=0：发送成功，记录 sent_at
             write_sms_code_file({
                 'code': '',
                 'sent_at': datetime.now().isoformat(),
                 'filled_at': '',
             })
             print(f'短信已发送，请在 {SMS_CODE_FILE} 中写入验证码')
+        elif resp_code == "1":
+            # code=1：有其他信息（如验证码还在有效期等），不算发送成功
+            msg = sms_result.get("msg") or sms_result.get("message") or sms_result.get("data") or ""
+            print(f'短信发送返回 code=1，未成功。响应信息: {msg or sms_result}')
+            if is_sms_still_valid_response(sms_result):
+                print('短信验证码仍在有效期内，不更新 sent_at，等待原有验证码写入。')
+                login_trace['reusedExistingSmsCode'] = True
+                # 不更新 sent_at，因为没有新短信发出，保留原发送时间
+            else:
+                # code=1 但不是"验证码在有效期"的情况，记录详细信息
+                print(f'⚠️ 短信发送返回 code=1 且非验证码有效期问题，请检查响应: {sms_result}')
+                login_trace['smsCode1Info'] = str(msg or sms_result)
+        elif is_captcha_error_response(sms_result):
+            raise RuntimeError(
+                '本次发短信返回图形验证码错误。为避免重复发送短信导致限制，当前流程不会自动再次发短信。'
+                '请更新 sms_code.json 中的验证码后重新发起登录。'
+            )
+        else:
+            raise RuntimeError(f"短信发送失败: {sms_result}")
 
     # ---- 等待文件中的验证码 ----
     print('等待短信验证码写入 sms_code.json（每秒轮询，10 分钟超时）...')
