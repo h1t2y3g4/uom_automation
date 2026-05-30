@@ -1,6 +1,7 @@
 [Unit]
 Description=UOM Automation Scheduler
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple

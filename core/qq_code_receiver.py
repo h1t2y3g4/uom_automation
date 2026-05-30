@@ -128,14 +128,12 @@ class QQCodeReceiver:
             self._running = False
 
     async def _run_bot(self):
-        """运行 botpy 客户端"""
+        """运行 botpy 客户端（带重试）"""
         intents = botpy.Intents(
             public_guild_messages=True,
             direct_message=True,
             public_messages=True  # 启用 C2C/群公域消息事件
         )
-
-        self._client = CodeReceiverClient(intents=intents, bot_log=None)
 
         # 在 bot_log=None 清空 handler 后，重新配置 botpy 日志
         botpy_logger = logging.getLogger("botpy")
@@ -145,7 +143,25 @@ class QQCodeReceiver:
         file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
         botpy_logger.addHandler(file_handler)
 
-        try:
-            await self._client.start(appid=self.appid, secret=self.secret)
-        except Exception as e:
-            logger.error(f"QQ Bot 启动失败: {e}", exc_info=True)
+        max_retries = 10
+        retry_delay = 30  # 初始重试间隔 30 秒
+
+        for attempt in range(1, max_retries + 1):
+            if not self._running:
+                break
+
+            try:
+                self._client = CodeReceiverClient(intents=intents, bot_log=None)
+                logger.info(f"QQ Bot 连接中... (第 {attempt} 次)")
+                await self._client.start(appid=self.appid, secret=self.secret)
+            except asyncio.CancelledError:
+                logger.info("QQ Bot 连接被取消")
+                break
+            except Exception as e:
+                logger.error(f"QQ Bot 连接失败 (第 {attempt} 次): {e}")
+                if attempt < max_retries:
+                    logger.info(f"将在 {retry_delay} 秒后重试...")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay = min(retry_delay * 2, 300)  # 指数退避，最大 5 分钟
+                else:
+                    logger.error(f"QQ Bot 重试 {max_retries} 次后仍失败，放弃")
