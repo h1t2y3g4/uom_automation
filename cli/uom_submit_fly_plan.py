@@ -17,6 +17,7 @@ uom_submit_fly_plan.py - UOM 自动提交飞行计划流程
   python3 uom_submit_fly_plan.py --use-time-list
   python3 uom_submit_fly_plan.py --dry-run
   python3 uom_submit_fly_plan.py --use-submit-plan --dry-run
+  python3 uom_submit_fly_plan.py --headless --use-submit-plan
 """
 
 import argparse
@@ -38,6 +39,7 @@ def build_parser():
     parser.add_argument('--use-submit-plan', action='store_true', help='按 submit_plan.json 中的 plans 循环提交')
     parser.add_argument('--use-time-list', action='store_true', help='兼容旧参数；实际改为读取 submit_plan.json')
     parser.add_argument('--dry-run', action='store_true', help='只解析时间并打印计划，不进入新增页、不提交')
+    parser.add_argument('--headless', action='store_true', help='无头模式运行浏览器')
     return parser
 
 
@@ -212,7 +214,7 @@ def main():
     drone_name = cfg.get("drone", {}).get("proName", "config.json 中的 drone.proName")
     drone_uas_code = cfg.get("drone", {}).get("uasCode", "config.json 中的 drone.uasCode")
     driver_name = cfg.get("driver", {}).get("name", "config.json 中的 driver.name")
-    playwright_handle, context, page = core.launch_context(headless=False)
+    playwright_handle, context, page = core.launch_context(headless=args.headless)
     try:
         login_flow = core.ensure_main_login_with_auto_sms(page)
         print('主站状态/自动登录结果:')
