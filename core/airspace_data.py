@@ -142,8 +142,8 @@ def resolve_submission_items(cfg, latest_detail, cli_args):
         items = data.get('plans', [])
         if not items:
             raise ValueError('submit_plan.json 中 plans 为空，无法按列表提交')
-        if len(items) > 5:
-            raise ValueError(f'submit_plan.json 的 plans 最多允许 5 条，本次配置了 {len(items)} 条')
+        if len(items) > 10:
+            raise ValueError(f'submit_plan.json 的 plans 最多允许 10 条，本次配置了 {len(items)} 条')
         return [normalize_submission_plan_item(item, cfg, airspace_cache) for item in items]
 
     plan_beg, plan_end = get_tomorrow_same_time(latest_detail['planBeg'], latest_detail['planEnd'])

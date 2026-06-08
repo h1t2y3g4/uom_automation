@@ -263,7 +263,7 @@ class UOMScheduler:
         next_monday = now + timedelta(days=days_until_next_monday)
 
         plans = []
-        for i in range(6):  # 周一到周六
+        for i in range(5):  # 周一到周五
             date = next_monday + timedelta(days=i)
             plans.append({
                 "planBeg": date.strftime('%Y-%m-%d') + " 17:50:00",
