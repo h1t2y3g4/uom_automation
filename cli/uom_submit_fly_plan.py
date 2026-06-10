@@ -277,6 +277,21 @@ def main():
         write_submit_log(run_log)
         print('全部提交流程结束，结果摘要:')
         print(json.dumps(core.sanitize_for_json(results), ensure_ascii=False, indent=2)[:8000])
+
+        # 更新本地存储的未来计划文件
+        print('\n更新本地存储的未来计划...')
+        try:
+            result, err = core.fetch_recent_plan_details(page)
+            if err:
+                print('读取最近计划详情失败，跳过更新本地存储:')
+                print(json.dumps(err, ensure_ascii=False, indent=2))
+            else:
+                filtered_result = core.filter_future_plan_details(result)
+                saved_path = core.save_recent_plan_details(filtered_result)
+                print(f'本地未来计划已更新: {saved_path}')
+                print(f'共 {filtered_result.get("count", 0)} 条未来计划')
+        except Exception as e:
+            print(f'更新本地存储时出现异常，不影响提交结果: {e}')
     finally:
         core.close_context(playwright_handle, context)
 
