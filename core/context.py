@@ -169,7 +169,7 @@ def fetch_latest_detail(page):
     return latest, None, detail
 
 
-def fetch_recent_plan_details(page, limit=5):
+def fetch_recent_plan_details(page, limit=20):
     plans = get_recent_plans(page, page_num=1, page_size=limit)
     if not plans.get('ok'):
         return None, plans
