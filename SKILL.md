@@ -242,6 +242,8 @@ AI 在需要改配置时，优先按职责修改：
 - 优先复用持久化浏览器 profile，减少短信登录
 - 当前 `.playwright-uom-profile` 已加单实例锁；同一时刻只能有一个 UOM 脚本占用它，若锁冲突应先结束另一条在跑的 UOM 命令
 - 锁文件属于运行时产物，统一放在 `runtime/` 下；不要把它当项目源码文件处理
+- 先查询空域再提交，要等查询空域的脚本运行完成，释放锁以后再运行提交的脚本。
+- 如果有多条空域需要申请，应该一并编辑好`submit_plan.json`后，一次运行uom_submit_fly_plan.py提交，避免多次登录和重复操作
 - 需要改流程时，公共逻辑优先收敛到对应子模块（如 `core/auth.py`、`core/fly_plan.py` 等）
 - 需要背景和历史结论时，不要在 `SKILL.md` 里找长篇说明，直接看 `doc/HANDOFF_UOM_PROJECT.md`
 - 当前所有入口脚本（`uom_login.py`、`uom_submit_fly_plan.py`、`uom_read_plan.py`、`uom_airspace_probe.py`）在未登录时都会自动尝试短信验证码登录
