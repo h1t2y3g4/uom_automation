@@ -608,6 +608,7 @@ def fill_new_form_from_detail(page, detail, plan_beg_new, plan_end_new, space_pa
                     lineWidth: sourceSpace.lineWidth ?? null,
                 };
                 f.spaces = [space];
+                f.spcTop = space.spcTop;
                 comp.$data.spaceList = [clone(space)];
                 comp.$data.oldSpaceList = [clone(space)];
                 tryInvoke(comp, 'callbackAddSpace', [space]);
