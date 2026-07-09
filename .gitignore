@@ -5,3 +5,4 @@ log/
 cache/
 runtime/
 config/config.json
+cli_auto/check_daily_sanjiang.py
